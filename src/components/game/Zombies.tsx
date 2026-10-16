@@ -14,7 +14,7 @@ interface ZombiesProps {
   zombiesRef: React.MutableRefObject<ZombieNetState[]>;
   isHost: boolean;
   localPlayerId: string;
-  localPlayerPos: [number, number, number];
+  localPlayerPosRef: React.MutableRefObject<[number, number, number]>;
   localPlayerHealth: number;
   onDamagePlayer: (damage: number) => void;
   onKillZombie: (zombieId: string, zombieType: ZombieType) => void;
@@ -31,7 +31,7 @@ export function Zombies({
   zombiesRef,
   isHost,
   localPlayerId,
-  localPlayerPos,
+  localPlayerPosRef,
   localPlayerHealth,
   onDamagePlayer,
   onKillZombie,
@@ -122,7 +122,7 @@ export function Zombies({
 
     const allSurvivors: Array<{ id: string; pos: [number, number, number]; health: number }> = [];
     if (localPlayerHealth > 0) {
-      allSurvivors.push({ id: localPlayerId, pos: localPlayerPos, health: localPlayerHealth });
+      allSurvivors.push({ id: localPlayerId, pos: localPlayerPosRef.current, health: localPlayerHealth });
     }
     Object.values(remotePlayers).forEach((p) => {
       if (p.health > 0) {
@@ -149,7 +149,7 @@ export function Zombies({
 
       // Find closest survivor
       let closestDist = Infinity;
-      let targetPos: [number, number, number] = localPlayerPos;
+      let targetPos: [number, number, number] = localPlayerPosRef.current;
       let targetId = localPlayerId;
 
       for (const survivor of allSurvivors) {
@@ -166,9 +166,9 @@ export function Zombies({
       // Check whether zombie should chase:
       // 1. Player is within detection range (16m - 24m)
       // 2. OR zombie was damaged (shot by a player)
-      // 3. OR zombie is actively in 'CHASING' or 'ATTACKING' and hasn't lost player yet (< 32m)
+      // 3. OR zombie is actively in 'CHASING' or 'ATTACKING' and player hasn't escaped far away yet (<= detectionRange + 4)
       const isWithinAggro = closestDist <= detectionRange;
-      const isAlreadyChasing = (zombie.state === 'CHASING' || zombie.state === 'ATTACKING') && closestDist <= 32;
+      const isAlreadyChasing = (zombie.state === 'CHASING' || zombie.state === 'ATTACKING') && closestDist <= (detectionRange + 4);
       const shouldChase = isDamaged || isWithinAggro || isAlreadyChasing;
 
       if (shouldChase) {
@@ -184,11 +184,16 @@ export function Zombies({
             lastAttackTime.current[zombie.id] = now;
             const damage = zombie.type === 'TANK' ? 30 : 15;
             if (targetId === localPlayerId) {
-              onDamagePlayer(damage);
+              // Strict proximity check: Only damage if player is ACTUALLY right in front of zombie (< 1.8m)
+              const curPos = localPlayerPosRef.current;
+              const realDist = Math.hypot(curPos[0] - zombie.position[0], curPos[2] - zombie.position[2]);
+              if (realDist <= 1.8) {
+                onDamagePlayer(damage);
+                sounds.playPlayerHurt();
+              }
             } else {
               realtimeManager?.sendPlayerDamaged(targetId, damage);
             }
-            sounds.playPlayerHurt();
           }
           return {
             ...zombie,

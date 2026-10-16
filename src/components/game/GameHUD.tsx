@@ -279,8 +279,8 @@ export function GameHUD({
           </div>
 
           <div className="flex flex-col font-mono text-[11px] text-zinc-400">
-            <span className="font-bold text-white">HP: {health}%</span>
-            <span>STAMINA: {stamina}%</span>
+            <span className="font-bold text-white">HP: {Math.round(health)}%</span>
+            <span>STAMINA: {Math.round(stamina)}%</span>
           </div>
         </div>
 

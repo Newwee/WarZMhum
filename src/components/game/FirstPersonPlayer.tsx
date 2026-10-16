@@ -38,6 +38,7 @@ interface FirstPersonPlayerProps {
   setIsLocked: (locked: boolean) => void;
   isADS: boolean;
   setIsADS: (ads: boolean) => void;
+  playerPosRef: React.MutableRefObject<[number, number, number]>;
 }
 
 export function FirstPersonPlayer({
@@ -68,6 +69,7 @@ export function FirstPersonPlayer({
   setIsLocked,
   isADS,
   setIsADS,
+  playerPosRef,
 }: FirstPersonPlayerProps) {
   const { camera, gl } = useThree();
 
@@ -77,6 +79,9 @@ export function FirstPersonPlayer({
   const moveKeys = useRef({ forward: false, backward: false, left: false, right: false, sprint: false });
   const euler = useRef(new THREE.Euler(0, 0, 0, 'YXZ'));
   const isGrounded = useRef(true);
+
+  // Gun holder attached to camera
+  const gunHolderRef = useRef<THREE.Group>(null);
 
   // Recoil & camera kick
   const recoilVal = useRef(0);
@@ -273,10 +278,11 @@ export function FirstPersonPlayer({
       }
     }
 
-    // Spawn 3D Bullet Tracer from gun position
-    const gunMuzzlePos = camera.position.clone().add(
-      new THREE.Vector3(0.2, -0.2, -0.4).applyQuaternion(camera.quaternion)
-    );
+    // Spawn 3D Bullet Tracer from actual gun muzzle tip
+    const muzzleOffset = isADS
+      ? new THREE.Vector3(0, -0.13, -0.65)
+      : new THREE.Vector3(currentWeapon === 'PISTOL' ? 0.22 : 0.25, -0.2, -0.72);
+    const gunMuzzlePos = camera.position.clone().add(muzzleOffset.applyQuaternion(camera.quaternion));
     onSpawnTracer({
       id: `tracer_${Date.now()}_${Math.random()}`,
       start: [gunMuzzlePos.x, gunMuzzlePos.y, gunMuzzlePos.z],
@@ -398,6 +404,15 @@ export function FirstPersonPlayer({
       camera.position.set(pos.current.x + tpsOffset.x, pos.current.y + 0.3 + tpsOffset.y, pos.current.z + tpsOffset.z);
     }
 
+    // Keep live player position ref updated for zombies so they never attack empty air
+    playerPosRef.current = [pos.current.x, pos.current.y, pos.current.z];
+
+    // Lock gun directly to camera in first-person so it NEVER floats away in mid-air
+    if (gunHolderRef.current) {
+      gunHolderRef.current.position.copy(camera.position);
+      gunHolderRef.current.quaternion.copy(camera.quaternion);
+    }
+
     // Network position broadcast
     realtimeManager?.sendPosition({
       id: playerId,
@@ -419,15 +434,17 @@ export function FirstPersonPlayer({
 
   return (
     <>
-      {/* FPS: Weapon Model in front of camera */}
+      {/* FPS: Weapon Model locked to camera */}
       {perspective === 'FPS' && (
-        <WeaponModel
-          weaponType={currentWeapon}
-          isADS={isADS}
-          isShooting={isShootingRef.current}
-          recoil={recoilVal.current}
-          bobOffset={bobbingTimer.current}
-        />
+        <group ref={gunHolderRef}>
+          <WeaponModel
+            weaponType={currentWeapon}
+            isADS={isADS}
+            isShooting={isShootingRef.current}
+            recoil={recoilVal.current}
+            bobOffset={bobbingTimer.current}
+          />
+        </group>
       )}
 
       {/* TPS: Full Survivor Avatar with backpack and helmet */}

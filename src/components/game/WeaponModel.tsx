@@ -17,43 +17,43 @@ export function WeaponModel({ weaponType, isADS, isShooting, recoil, bobOffset }
   const slideRef = useRef<THREE.Group>(null);
   const muzzleFlashRef = useRef<THREE.PointLight>(null);
 
-  // Target positions: ADS centers the sights, Hip rests at bottom right
+  // Target local offsets relative to camera:
   const targetPos = useMemo(() => {
     if (weaponType === 'PISTOL') {
       return isADS
-        ? new THREE.Vector3(0, -0.12, -0.32)
-        : new THREE.Vector3(0.2, -0.2, -0.38);
+        ? new THREE.Vector3(0, -0.135, -0.32)
+        : new THREE.Vector3(0.22, -0.22, -0.42);
     } else {
       return isADS
-        ? new THREE.Vector3(0, -0.14, -0.34)
-        : new THREE.Vector3(0.24, -0.22, -0.44);
+        ? new THREE.Vector3(0, -0.145, -0.36)
+        : new THREE.Vector3(0.25, -0.24, -0.48);
     }
   }, [isADS, weaponType]);
 
   useFrame((_, delta) => {
     if (!groupRef.current) return;
 
-    // Smooth interpolation towards target position (ADS transition)
-    const lerpSpeed = isADS ? 18 : 12;
+    // Smooth ADS transition
+    const lerpSpeed = isADS ? 20 : 14;
     groupRef.current.position.x = THREE.MathUtils.lerp(groupRef.current.position.x, targetPos.x, delta * lerpSpeed);
     groupRef.current.position.y = THREE.MathUtils.lerp(
       groupRef.current.position.y,
-      targetPos.y + (isADS ? 0 : bobOffset * 0.4),
+      targetPos.y + (isADS ? 0 : Math.sin(bobOffset) * 0.02),
       delta * lerpSpeed
     );
     groupRef.current.position.z = THREE.MathUtils.lerp(
       groupRef.current.position.z,
-      targetPos.z + recoil * 0.6,
-      delta * 22
+      targetPos.z + recoil * 0.5,
+      delta * 24
     );
 
     // Recoil upward pitch
-    const targetPitch = recoil * (weaponType === 'PISTOL' ? 1.4 : 0.8);
-    groupRef.current.rotation.x = THREE.MathUtils.lerp(groupRef.current.rotation.x, -targetPitch, delta * 24);
+    const targetPitch = recoil * (weaponType === 'PISTOL' ? 1.4 : 0.9);
+    groupRef.current.rotation.x = THREE.MathUtils.lerp(groupRef.current.rotation.x, -targetPitch, delta * 26);
 
     // Slide kickback on pistol
     if (slideRef.current) {
-      slideRef.current.position.z = THREE.MathUtils.lerp(slideRef.current.position.z, recoil * 0.4, delta * 30);
+      slideRef.current.position.z = THREE.MathUtils.lerp(slideRef.current.position.z, recoil * 0.45, delta * 32);
     }
   });
 
@@ -61,7 +61,7 @@ export function WeaponModel({ weaponType, isADS, isShooting, recoil, bobOffset }
     <group ref={groupRef} position={[targetPos.x, targetPos.y, targetPos.z]}>
       {/* 1. .45 THUNDER PISTOL / REVOLVER (Matching WarZ Image 1) */}
       {weaponType === 'PISTOL' && (
-        <group scale={[0.85, 0.85, 0.85]}>
+        <group scale={[1.15, 1.15, 1.15]}>
           {/* Gun Frame & Receiver */}
           <mesh position={[0, 0, 0]}>
             <boxGeometry args={[0.045, 0.08, 0.22]} />
@@ -107,30 +107,28 @@ export function WeaponModel({ weaponType, isADS, isShooting, recoil, bobOffset }
             <meshStandardMaterial color="#111315" roughness={0.2} metalness={0.95} />
           </mesh>
 
-          {/* Survivor Hands holding gun (WarZ style) */}
-          {!isADS && (
-            <group position={[0.02, -0.12, 0.08]}>
-              {/* Right Hand */}
-              <mesh position={[0, 0, 0]}>
-                <sphereGeometry args={[0.05, 12, 12]} />
-                <meshStandardMaterial color="#c89678" roughness={0.6} />
-              </mesh>
-              {/* Arm Sleeve */}
-              <mesh position={[0.05, -0.12, 0.15]} rotation={[-0.5, 0.2, -0.2]}>
-                <cylinderGeometry args={[0.055, 0.065, 0.25, 12]} />
-                <meshStandardMaterial color="#2d3732" roughness={0.8} />
-              </mesh>
-            </group>
-          )}
+          {/* Survivor Hands holding gun (WarZ style - Image 1) */}
+          <group position={[0.02, -0.1, 0.08]}>
+            {/* Right Hand */}
+            <mesh position={[0, 0, 0]}>
+              <sphereGeometry args={[0.055, 12, 12]} />
+              <meshStandardMaterial color="#c89678" roughness={0.6} />
+            </mesh>
+            {/* Forearm Sleeve */}
+            <mesh position={[0.04, -0.14, 0.14]} rotation={[-0.5, 0.2, -0.2]}>
+              <cylinderGeometry args={[0.055, 0.065, 0.26, 12]} />
+              <meshStandardMaterial color="#2d3732" roughness={0.8} />
+            </mesh>
+          </group>
 
           {/* Muzzle Flash */}
           {isShooting && (
             <group position={[0, 0.035, -0.26]}>
               <mesh>
-                <sphereGeometry args={[0.06, 8, 8]} />
+                <sphereGeometry args={[0.08, 8, 8]} />
                 <meshBasicMaterial color="#ffaa00" />
               </mesh>
-              <pointLight ref={muzzleFlashRef} color="#ff9900" intensity={4} distance={6} />
+              <pointLight ref={muzzleFlashRef} color="#ff9900" intensity={5} distance={7} />
             </group>
           )}
         </group>
@@ -138,7 +136,7 @@ export function WeaponModel({ weaponType, isADS, isShooting, recoil, bobOffset }
 
       {/* 2. M4A1 ASSAULT RIFLE */}
       {weaponType === 'RIFLE' && (
-        <group scale={[0.8, 0.8, 0.8]}>
+        <group scale={[0.95, 0.95, 0.95]}>
           {/* Main Receiver */}
           <mesh position={[0, 0, 0]}>
             <boxGeometry args={[0.055, 0.09, 0.42]} />
@@ -186,29 +184,27 @@ export function WeaponModel({ weaponType, isADS, isShooting, recoil, bobOffset }
           </mesh>
 
           {/* Survivor Arms */}
-          {!isADS && (
-            <group>
-              {/* Right Arm */}
-              <mesh position={[0.08, -0.14, 0.2]} rotation={[-0.4, 0.2, -0.1]}>
-                <cylinderGeometry args={[0.06, 0.07, 0.28, 12]} />
-                <meshStandardMaterial color="#2d3732" roughness={0.8} />
-              </mesh>
-              {/* Left Arm on Handguard */}
-              <mesh position={[-0.08, -0.08, -0.22]} rotation={[0.5, -0.3, 0.2]}>
-                <cylinderGeometry args={[0.055, 0.065, 0.26, 12]} />
-                <meshStandardMaterial color="#2d3732" roughness={0.8} />
-              </mesh>
-            </group>
-          )}
+          <group>
+            {/* Right Arm */}
+            <mesh position={[0.08, -0.14, 0.2]} rotation={[-0.4, 0.2, -0.1]}>
+              <cylinderGeometry args={[0.06, 0.07, 0.28, 12]} />
+              <meshStandardMaterial color="#2d3732" roughness={0.8} />
+            </mesh>
+            {/* Left Arm on Handguard */}
+            <mesh position={[-0.08, -0.08, -0.22]} rotation={[0.5, -0.3, 0.2]}>
+              <cylinderGeometry args={[0.055, 0.065, 0.26, 12]} />
+              <meshStandardMaterial color="#2d3732" roughness={0.8} />
+            </mesh>
+          </group>
 
           {/* Muzzle Flash */}
           {isShooting && (
             <group position={[0, 0.015, -0.58]}>
               <mesh>
-                <sphereGeometry args={[0.08, 8, 8]} />
+                <sphereGeometry args={[0.09, 8, 8]} />
                 <meshBasicMaterial color="#ffbb22" />
               </mesh>
-              <pointLight ref={muzzleFlashRef} color="#ff9900" intensity={5} distance={7} />
+              <pointLight ref={muzzleFlashRef} color="#ff9900" intensity={6} distance={8} />
             </group>
           )}
         </group>

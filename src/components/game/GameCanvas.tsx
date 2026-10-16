@@ -55,6 +55,7 @@ export function GameCanvas({
   const [remotePlayers, setRemotePlayers] = useState<Record<string, PlayerNetState>>({});
   const [zombies, setZombies] = useState<ZombieNetState[]>([]);
   const zombiesRef = useRef<ZombieNetState[]>([]);
+  const localPlayerPosRef = useRef<[number, number, number]>([0, 1.7, 5]);
 
   // Waves & Match summary
   const [currentWave, setCurrentWave] = useState(1);
@@ -319,6 +320,7 @@ export function GameCanvas({
           setIsLocked={setIsLocked}
           isADS={isADS}
           setIsADS={setIsADS}
+          playerPosRef={localPlayerPosRef}
         />
 
         {/* Remote Teammate Avatars */}
@@ -331,7 +333,7 @@ export function GameCanvas({
           zombiesRef={zombiesRef}
           isHost={isHost}
           localPlayerId={localPlayerId}
-          localPlayerPos={[0, 1.7, 5]}
+          localPlayerPosRef={localPlayerPosRef}
           localPlayerHealth={health}
           onDamagePlayer={handleDamagePlayer}
           onKillZombie={handleKillZombie}
