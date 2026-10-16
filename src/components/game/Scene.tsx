@@ -1,99 +1,169 @@
 'use client';
 
 import React, { useMemo } from 'react';
+import * as THREE from 'three';
+
+// Procedural Military Humvee (WarZ Image 2)
+function Humvee({ position, rotation }: { position: [number, number, number]; rotation: number }) {
+  return (
+    <group position={position} rotation={[0, rotation, 0]} scale={[1.2, 1.2, 1.2]}>
+      {/* Humvee Main Body (Desert Tan #b5a478) */}
+      <mesh position={[0, 0.9, 0]} castShadow receiveShadow>
+        <boxGeometry args={[2.2, 0.9, 4.4]} />
+        <meshStandardMaterial color="#ab9a70" roughness={0.7} />
+      </mesh>
+
+      {/* Slanted Roof Cabin */}
+      <mesh position={[0, 1.6, -0.2]} castShadow receiveShadow>
+        <boxGeometry args={[1.9, 0.7, 2.6]} />
+        <meshStandardMaterial color="#9e8d64" roughness={0.7} />
+      </mesh>
+
+      {/* Windshield */}
+      <mesh position={[0, 1.55, 1.15]} rotation={[-0.35, 0, 0]}>
+        <boxGeometry args={[1.8, 0.55, 0.05]} />
+        <meshStandardMaterial color="#1f2421" roughness={0.2} metalness={0.9} />
+      </mesh>
+
+      {/* Front Bull Bar / Grille */}
+      <mesh position={[0, 0.8, 2.25]}>
+        <boxGeometry args={[1.8, 0.6, 0.15]} />
+        <meshStandardMaterial color="#1a1c1a" roughness={0.5} metalness={0.8} />
+      </mesh>
+
+      {/* Chunky Off-road Wheels */}
+      {[
+        [-1.15, 0.5, 1.4],
+        [1.15, 0.5, 1.4],
+        [-1.15, 0.5, -1.4],
+        [1.15, 0.5, -1.4],
+      ].map(([wx, wy, wz], i) => (
+        <group key={i} position={[wx, wy, wz]} rotation={[0, 0, Math.PI / 2]}>
+          <mesh castShadow>
+            <cylinderGeometry args={[0.5, 0.5, 0.42, 16]} />
+            <meshStandardMaterial color="#181a18" roughness={0.9} />
+          </mesh>
+          <mesh>
+            <cylinderGeometry args={[0.26, 0.26, 0.44, 8]} />
+            <meshStandardMaterial color="#3a3d3a" metalness={0.6} />
+          </mesh>
+        </group>
+      ))}
+
+      {/* Roof Mounted Hatch / Turret Base */}
+      <mesh position={[0, 2.05, -0.2]}>
+        <cylinderGeometry args={[0.45, 0.45, 0.25, 16]} />
+        <meshStandardMaterial color="#1f231f" metalness={0.7} />
+      </mesh>
+    </group>
+  );
+}
+
+// Procedural Pine Tree (WarZ Image 1 & 3)
+function Tree({ position, scale = 1 }: { position: [number, number, number]; scale?: number }) {
+  return (
+    <group position={position} scale={[scale, scale, scale]}>
+      {/* Trunk */}
+      <mesh position={[0, 2.5, 0]} castShadow receiveShadow>
+        <cylinderGeometry args={[0.25, 0.4, 5, 8]} />
+        <meshStandardMaterial color="#402d1d" roughness={0.9} />
+      </mesh>
+      {/* Foliage Layers */}
+      <mesh position={[0, 4.5, 0]} castShadow>
+        <coneGeometry args={[2.2, 3.5, 7]} />
+        <meshStandardMaterial color="#223b28" roughness={0.8} />
+      </mesh>
+      <mesh position={[0, 6.2, 0]} castShadow>
+        <coneGeometry args={[1.7, 3, 7]} />
+        <meshStandardMaterial color="#2d4a34" roughness={0.8} />
+      </mesh>
+      <mesh position={[0, 7.6, 0]} castShadow>
+        <coneGeometry args={[1.2, 2.4, 7]} />
+        <meshStandardMaterial color="#385940" roughness={0.8} />
+      </mesh>
+    </group>
+  );
+}
 
 export function Scene() {
-  // Generate random atmospheric barricades and obstacles
-  const obstacles = useMemo(() => {
-    const list: Array<{ x: number; z: number; w: number; h: number; d: number; color: string; rotation: number }> = [];
-    const colors = ['#272e2b', '#1a221f', '#3b433f', '#181b19'];
-    
-    // Perimeter barricades
-    for (let i = -35; i <= 35; i += 7) {
-      list.push({ x: i, z: -40, w: 6.5, h: 3, d: 1, color: '#1c2420', rotation: 0 });
-      list.push({ x: i, z: 40, w: 6.5, h: 3, d: 1, color: '#1c2420', rotation: 0 });
-      list.push({ x: -40, z: i, w: 1, h: 3, d: 6.5, color: '#1c2420', rotation: 0 });
-      list.push({ x: 40, z: i, w: 1, h: 3, d: 6.5, color: '#1c2420', rotation: 0 });
-    }
-
-    // Abandoned military crates and ruined barricades inside the zone
-    const placements = [
-      { x: -12, z: -10, w: 4, h: 2.2, d: 2, rot: 0.3 },
-      { x: -14, z: -8, w: 3, h: 1.8, d: 3, rot: -0.2 },
-      { x: 15, z: -15, w: 6, h: 2.8, d: 2.5, rot: 0.7 },
-      { x: 10, z: 12, w: 5, h: 2.4, d: 2, rot: -0.5 },
-      { x: -8, z: 18, w: 4.5, h: 2.6, d: 2.5, rot: 0.1 },
-      { x: -20, z: 5, w: 7, h: 3.2, d: 3, rot: 1.2 },
-      { x: 22, z: 8, w: 4, h: 2, d: 4, rot: -0.8 },
-      { x: 0, z: 25, w: 8, h: 2.5, d: 1.5, rot: 0 },
-    ];
-
-    placements.forEach((p, idx) => {
+  // Trees scattered along wilderness perimeter
+  const trees = useMemo(() => {
+    const list: Array<{ x: number; z: number; scale: number }> = [];
+    for (let i = 0; i < 28; i++) {
+      const angle = (i / 28) * Math.PI * 2;
+      const dist = 28 + (i % 5) * 4;
       list.push({
-        x: p.x,
-        z: p.z,
-        w: p.w,
-        h: p.h,
-        d: p.d,
-        color: colors[idx % colors.length],
-        rotation: p.rot,
+        x: Math.cos(angle) * dist + (Math.sin(i * 3) * 4),
+        z: Math.sin(angle) * dist + (Math.cos(i * 2) * 4),
+        scale: 0.8 + (i % 4) * 0.25,
       });
-    });
-
+    }
     return list;
   }, []);
 
   return (
     <>
-      {/* Fog and Lighting */}
-      <color attach="background" args={['#080c0a']} />
-      <fog attach="fog" args={['#080c0a', 8, 50]} />
-      
-      {/* Dim ambient light for survival tension */}
-      <ambientLight intensity={0.25} />
-      
-      {/* Cold directional moonlight */}
+      {/* Golden Hour / Twilight Sky & Atmospheric Fog (WarZ Image 1) */}
+      <color attach="background" args={['#1c1815']} />
+      <fog attach="fog" args={['#241f1a', 15, 70]} />
+
+      {/* Atmospheric ambient fill */}
+      <ambientLight intensity={0.4} color="#f5d0a6" />
+
+      {/* Low Golden Hour Sun (Image 1) */}
       <directionalLight
-        position={[25, 40, 20]}
-        intensity={0.65}
-        color="#a5b4fc"
+        position={[45, 28, -35]}
+        intensity={1.2}
+        color="#ffaa55"
         castShadow
-        shadow-mapSize-width={1024}
-        shadow-mapSize-height={1024}
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
+        shadow-bias={-0.0001}
       />
 
-      {/* Atmospheric flickering outpost lamps */}
-      <pointLight position={[-10, 5, -10]} intensity={1.8} color="#f59e0b" distance={18} decay={2} />
-      <pointLight position={[15, 5, 12]} intensity={1.5} color="#10b981" distance={16} decay={2} />
+      {/* Visible Sun Disk in Sky */}
+      <mesh position={[120, 65, -90]}>
+        <sphereGeometry args={[8, 16, 16]} />
+        <meshBasicMaterial color="#ffe8aa" />
+      </mesh>
 
-      {/* Main Ground with grit texture */}
+      {/* Main Ground: Weathered Airfield Tarmac & Dirt (WarZ Image 2) */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
-        <planeGeometry args={[90, 90]} />
-        <meshStandardMaterial color="#111815" roughness={0.9} metalness={0.1} />
+        <planeGeometry args={[160, 160]} />
+        <meshStandardMaterial color="#2d2b27" roughness={0.85} metalness={0.15} />
       </mesh>
 
-      {/* Grid overlay for tactical radar aesthetic */}
-      <gridHelper args={[90, 45, '#1e3a2f', '#0d1f17']} position={[0, 0.02, 0]} />
+      {/* Tarmac Runway Markings */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]}>
+        <planeGeometry args={[18, 90]} />
+        <meshStandardMaterial color="#35332f" roughness={0.8} />
+      </mesh>
+      {/* Yellow Centerline */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.015, 0]}>
+        <planeGeometry args={[0.4, 70]} />
+        <meshStandardMaterial color="#eab308" roughness={0.6} />
+      </mesh>
 
-      {/* Outpost Barricades and Containers */}
-      {obstacles.map((obs, i) => (
-        <mesh
-          key={i}
-          position={[obs.x, obs.h / 2, obs.z]}
-          rotation={[0, obs.rotation, 0]}
-          castShadow
-          receiveShadow
-        >
-          <boxGeometry args={[obs.w, obs.h, obs.d]} />
-          <meshStandardMaterial color={obs.color} roughness={0.8} />
+      {/* Abandoned Military Humvees (Image 2) */}
+      <Humvee position={[-8, 0, -6]} rotation={0.4} />
+      <Humvee position={[14, 0, 12]} rotation={-1.8} />
+
+      {/* Military Outpost Sandbags & Crates */}
+      <group position={[4, 0, -4]}>
+        <mesh position={[0, 0.4, 0]} castShadow receiveShadow>
+          <boxGeometry args={[4, 0.8, 0.8]} />
+          <meshStandardMaterial color="#8a7c5c" roughness={0.9} />
         </mesh>
-      ))}
+        <mesh position={[0, 1.0, 0]} castShadow receiveShadow>
+          <boxGeometry args={[3.2, 0.6, 0.7]} />
+          <meshStandardMaterial color="#8a7c5c" roughness={0.9} />
+        </mesh>
+      </group>
 
-      {/* Central Outpost Shelter Pillars */}
-      <mesh position={[0, 2, 0]} castShadow receiveShadow>
-        <boxGeometry args={[3, 4, 3]} />
-        <meshStandardMaterial color="#2d3732" roughness={0.7} />
-      </mesh>
+      {/* Desert Trees & Shrubs */}
+      {trees.map((t, idx) => (
+        <Tree key={idx} position={[t.x, 0, t.z]} scale={t.scale} />
+      ))}
     </>
   );
 }

@@ -1,0 +1,218 @@
+'use client';
+
+import React, { useRef, useMemo } from 'react';
+import { useFrame } from '@react-three/fiber';
+import * as THREE from 'three';
+
+interface WeaponModelProps {
+  weaponType: 'RIFLE' | 'PISTOL';
+  isADS: boolean;
+  isShooting: boolean;
+  recoil: number;
+  bobOffset: number;
+}
+
+export function WeaponModel({ weaponType, isADS, isShooting, recoil, bobOffset }: WeaponModelProps) {
+  const groupRef = useRef<THREE.Group>(null);
+  const slideRef = useRef<THREE.Group>(null);
+  const muzzleFlashRef = useRef<THREE.PointLight>(null);
+
+  // Target positions: ADS centers the sights, Hip rests at bottom right
+  const targetPos = useMemo(() => {
+    if (weaponType === 'PISTOL') {
+      return isADS
+        ? new THREE.Vector3(0, -0.12, -0.32)
+        : new THREE.Vector3(0.2, -0.2, -0.38);
+    } else {
+      return isADS
+        ? new THREE.Vector3(0, -0.14, -0.34)
+        : new THREE.Vector3(0.24, -0.22, -0.44);
+    }
+  }, [isADS, weaponType]);
+
+  useFrame((_, delta) => {
+    if (!groupRef.current) return;
+
+    // Smooth interpolation towards target position (ADS transition)
+    const lerpSpeed = isADS ? 18 : 12;
+    groupRef.current.position.x = THREE.MathUtils.lerp(groupRef.current.position.x, targetPos.x, delta * lerpSpeed);
+    groupRef.current.position.y = THREE.MathUtils.lerp(
+      groupRef.current.position.y,
+      targetPos.y + (isADS ? 0 : bobOffset * 0.4),
+      delta * lerpSpeed
+    );
+    groupRef.current.position.z = THREE.MathUtils.lerp(
+      groupRef.current.position.z,
+      targetPos.z + recoil * 0.6,
+      delta * 22
+    );
+
+    // Recoil upward pitch
+    const targetPitch = recoil * (weaponType === 'PISTOL' ? 1.4 : 0.8);
+    groupRef.current.rotation.x = THREE.MathUtils.lerp(groupRef.current.rotation.x, -targetPitch, delta * 24);
+
+    // Slide kickback on pistol
+    if (slideRef.current) {
+      slideRef.current.position.z = THREE.MathUtils.lerp(slideRef.current.position.z, recoil * 0.4, delta * 30);
+    }
+  });
+
+  return (
+    <group ref={groupRef} position={[targetPos.x, targetPos.y, targetPos.z]}>
+      {/* 1. .45 THUNDER PISTOL / REVOLVER (Matching WarZ Image 1) */}
+      {weaponType === 'PISTOL' && (
+        <group scale={[0.85, 0.85, 0.85]}>
+          {/* Gun Frame & Receiver */}
+          <mesh position={[0, 0, 0]}>
+            <boxGeometry args={[0.045, 0.08, 0.22]} />
+            <meshStandardMaterial color="#22252a" roughness={0.3} metalness={0.85} />
+          </mesh>
+
+          {/* Grip / Handle */}
+          <mesh position={[0, -0.09, 0.06]} rotation={[0.3, 0, 0]}>
+            <boxGeometry args={[0.04, 0.12, 0.05]} />
+            <meshStandardMaterial color="#3d2817" roughness={0.7} />
+          </mesh>
+
+          {/* Trigger & Guard */}
+          <mesh position={[0, -0.05, 0.02]} rotation={[0, Math.PI / 2, 0]}>
+            <torusGeometry args={[0.02, 0.004, 8, 16, Math.PI]} />
+            <meshStandardMaterial color="#1a1c20" metalness={0.9} />
+          </mesh>
+
+          {/* Slide with Ejection Port */}
+          <group ref={slideRef} position={[0, 0.045, -0.02]}>
+            <mesh>
+              <boxGeometry args={[0.044, 0.045, 0.26]} />
+              <meshStandardMaterial color="#181a1d" roughness={0.25} metalness={0.9} />
+            </mesh>
+            {/* Front & Rear Iron Sights */}
+            <mesh position={[0, 0.026, -0.12]}>
+              <boxGeometry args={[0.005, 0.009, 0.008]} />
+              <meshBasicMaterial color="#10b981" />
+            </mesh>
+            <mesh position={[-0.012, 0.026, 0.11]}>
+              <boxGeometry args={[0.004, 0.008, 0.006]} />
+              <meshBasicMaterial color="#ffffff" />
+            </mesh>
+            <mesh position={[0.012, 0.026, 0.11]}>
+              <boxGeometry args={[0.004, 0.008, 0.006]} />
+              <meshBasicMaterial color="#ffffff" />
+            </mesh>
+          </group>
+
+          {/* Heavy Barrel */}
+          <mesh position={[0, 0.035, -0.16]} rotation={[Math.PI / 2, 0, 0]}>
+            <cylinderGeometry args={[0.016, 0.016, 0.12, 12]} />
+            <meshStandardMaterial color="#111315" roughness={0.2} metalness={0.95} />
+          </mesh>
+
+          {/* Survivor Hands holding gun (WarZ style) */}
+          {!isADS && (
+            <group position={[0.02, -0.12, 0.08]}>
+              {/* Right Hand */}
+              <mesh position={[0, 0, 0]}>
+                <sphereGeometry args={[0.05, 12, 12]} />
+                <meshStandardMaterial color="#c89678" roughness={0.6} />
+              </mesh>
+              {/* Arm Sleeve */}
+              <mesh position={[0.05, -0.12, 0.15]} rotation={[-0.5, 0.2, -0.2]}>
+                <cylinderGeometry args={[0.055, 0.065, 0.25, 12]} />
+                <meshStandardMaterial color="#2d3732" roughness={0.8} />
+              </mesh>
+            </group>
+          )}
+
+          {/* Muzzle Flash */}
+          {isShooting && (
+            <group position={[0, 0.035, -0.26]}>
+              <mesh>
+                <sphereGeometry args={[0.06, 8, 8]} />
+                <meshBasicMaterial color="#ffaa00" />
+              </mesh>
+              <pointLight ref={muzzleFlashRef} color="#ff9900" intensity={4} distance={6} />
+            </group>
+          )}
+        </group>
+      )}
+
+      {/* 2. M4A1 ASSAULT RIFLE */}
+      {weaponType === 'RIFLE' && (
+        <group scale={[0.8, 0.8, 0.8]}>
+          {/* Main Receiver */}
+          <mesh position={[0, 0, 0]}>
+            <boxGeometry args={[0.055, 0.09, 0.42]} />
+            <meshStandardMaterial color="#25282c" roughness={0.4} metalness={0.8} />
+          </mesh>
+
+          {/* Tactical Handguard / Rail */}
+          <mesh position={[0, 0.01, -0.28]}>
+            <boxGeometry args={[0.05, 0.075, 0.24]} />
+            <meshStandardMaterial color="#1c1e21" roughness={0.5} metalness={0.7} />
+          </mesh>
+
+          {/* Long Barrel & Flash Hider */}
+          <mesh position={[0, 0.015, -0.46]} rotation={[Math.PI / 2, 0, 0]}>
+            <cylinderGeometry args={[0.014, 0.014, 0.22, 12]} />
+            <meshStandardMaterial color="#0f1113" roughness={0.2} metalness={0.95} />
+          </mesh>
+
+          {/* Banana Magazine (30 Rounds) */}
+          <mesh position={[0, -0.12, -0.05]} rotation={[-0.2, 0, 0]}>
+            <boxGeometry args={[0.038, 0.16, 0.07]} />
+            <meshStandardMaterial color="#181a1c" roughness={0.6} metalness={0.6} />
+          </mesh>
+
+          {/* Pistol Grip */}
+          <mesh position={[0, -0.1, 0.12]} rotation={[0.4, 0, 0]}>
+            <boxGeometry args={[0.038, 0.12, 0.05]} />
+            <meshStandardMaterial color="#141517" roughness={0.8} />
+          </mesh>
+
+          {/* Tactical Stock */}
+          <mesh position={[0, 0.01, 0.28]}>
+            <boxGeometry args={[0.045, 0.1, 0.2]} />
+            <meshStandardMaterial color="#202326" roughness={0.6} metalness={0.5} />
+          </mesh>
+
+          {/* Iron Sights */}
+          <mesh position={[0, 0.055, -0.38]}>
+            <boxGeometry args={[0.006, 0.02, 0.01]} />
+            <meshBasicMaterial color="#ef4444" />
+          </mesh>
+          <mesh position={[0, 0.06, 0.16]}>
+            <boxGeometry args={[0.03, 0.018, 0.015]} />
+            <meshStandardMaterial color="#1a1c1e" />
+          </mesh>
+
+          {/* Survivor Arms */}
+          {!isADS && (
+            <group>
+              {/* Right Arm */}
+              <mesh position={[0.08, -0.14, 0.2]} rotation={[-0.4, 0.2, -0.1]}>
+                <cylinderGeometry args={[0.06, 0.07, 0.28, 12]} />
+                <meshStandardMaterial color="#2d3732" roughness={0.8} />
+              </mesh>
+              {/* Left Arm on Handguard */}
+              <mesh position={[-0.08, -0.08, -0.22]} rotation={[0.5, -0.3, 0.2]}>
+                <cylinderGeometry args={[0.055, 0.065, 0.26, 12]} />
+                <meshStandardMaterial color="#2d3732" roughness={0.8} />
+              </mesh>
+            </group>
+          )}
+
+          {/* Muzzle Flash */}
+          {isShooting && (
+            <group position={[0, 0.015, -0.58]}>
+              <mesh>
+                <sphereGeometry args={[0.08, 8, 8]} />
+                <meshBasicMaterial color="#ffbb22" />
+              </mesh>
+              <pointLight ref={muzzleFlashRef} color="#ff9900" intensity={5} distance={7} />
+            </group>
+          )}
+        </group>
+      )}
+    </group>
+  );
+}

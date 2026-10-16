@@ -8,6 +8,7 @@ import { RemotePlayers } from './RemotePlayers';
 import { Zombies } from './Zombies';
 import { GameHUD } from './GameHUD';
 import { GameOverModal } from './GameOverModal';
+import { ImpactEffects, BloodPool, BulletTracer } from './ImpactEffects';
 import { RealtimeManager } from '@/lib/network/realtime-manager';
 import { PlayerNetState, ZombieNetState, ShootEvent, WaveState, MatchSummary, ZombieType } from '@/types/game';
 import { sounds } from '@/lib/audio/sound-effects';
@@ -29,23 +30,33 @@ export function GameCanvas({
   realtimeManager,
   onExitGame,
 }: GameCanvasProps) {
-  // Player state
+  // Player vitals & weapon state
   const [health, setHealth] = useState(100);
+  const [stamina, setStamina] = useState(100);
+  const [currentWeapon, setCurrentWeapon] = useState<'RIFLE' | 'PISTOL'>('RIFLE');
   const [ammo, setAmmo] = useState(30);
-  const [maxAmmo] = useState(30);
+  const [maxAmmo, setMaxAmmo] = useState(30);
   const [isReloading, setIsReloading] = useState(false);
   const [score, setScore] = useState(0);
   const [kills, setKills] = useState(0);
+
+  // View & Control state
+  const [perspective, setPerspective] = useState<'FPS' | 'TPS'>('FPS');
+  const [isADS, setIsADS] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const [damageVignette, setDamageVignette] = useState(false);
   const [hitMarker, setHitMarker] = useState<'body' | 'head' | null>(null);
 
-  // Multiplayer state
+  // FX: Blood Pools & Bullet Tracers
+  const [bloodPools, setBloodPools] = useState<BloodPool[]>([]);
+  const [tracers, setTracers] = useState<BulletTracer[]>([]);
+
+  // Multiplayer & Zombies
   const [remotePlayers, setRemotePlayers] = useState<Record<string, PlayerNetState>>({});
   const [zombies, setZombies] = useState<ZombieNetState[]>([]);
   const zombiesRef = useRef<ZombieNetState[]>([]);
 
-  // Wave & Game loop state
+  // Waves & Match summary
   const [currentWave, setCurrentWave] = useState(1);
   const [waveState, setWaveState] = useState<WaveState>({
     wave: 1,
@@ -57,6 +68,31 @@ export function GameCanvas({
   const [gameOver, setGameOver] = useState(false);
   const [matchSummary, setMatchSummary] = useState<MatchSummary | null>(null);
   const gameStartTime = useRef(Date.now());
+
+  // Switch weapon logic
+  const handleWeaponChange = (newWeapon: 'RIFLE' | 'PISTOL') => {
+    setCurrentWeapon(newWeapon);
+    if (newWeapon === 'PISTOL') {
+      setMaxAmmo(6);
+      setAmmo(6);
+    } else {
+      setMaxAmmo(30);
+      setAmmo(30);
+    }
+  };
+
+  // Add bullet tracer with auto-cleanup
+  const handleSpawnTracer = useCallback((newTracer: BulletTracer) => {
+    setTracers((prev) => [...prev.slice(-10), newTracer]);
+    setTimeout(() => {
+      setTracers((prev) => prev.filter((t) => t.id !== newTracer.id));
+    }, 120);
+  }, []);
+
+  // Add blood pool decal with cap
+  const handleSpawnBloodPool = useCallback((newPool: BloodPool) => {
+    setBloodPools((prev) => [...prev.slice(-25), newPool]);
+  }, []);
 
   // Damage Player handler
   const handleDamagePlayer = useCallback((damage: number) => {
@@ -75,42 +111,43 @@ export function GameCanvas({
   // Hit Marker trigger
   const handleHitMarker = useCallback((isHeadshot: boolean) => {
     setHitMarker(isHeadshot ? 'head' : 'body');
-    setTimeout(() => setHitMarker(null), 120);
+    setTimeout(() => setHitMarker(null), 140);
   }, []);
 
   // Kill zombie handler
-  const handleKillZombie = useCallback((zombieId: string, zombieType: ZombieType) => {
-    const pts = zombieType === 'TANK' ? 300 : zombieType === 'RUNNER' ? 150 : 100;
-    setScore((s) => s + pts);
-    setKills((k) => k + 1);
+  const handleKillZombie = useCallback(
+    (zombieId: string, zombieType: ZombieType) => {
+      const pts = zombieType === 'TANK' ? 350 : zombieType === 'RUNNER' ? 180 : 100;
+      setScore((s) => s + pts);
+      setKills((k) => k + 1);
 
-    setZombies((prev) => {
-      const filtered = prev.filter((z) => z.id !== zombieId);
-      setWaveState((w) => {
-        const remaining = filtered.length;
-        if (remaining === 0 && isHost) {
-          // Wave Cleared! Advance to next wave after delay
-          setTimeout(() => {
-            setCurrentWave((cw) => cw + 1);
-            setWaveState({
-              wave: currentWave + 1,
-              zombiesRemaining: 6 + (currentWave + 1) * 4,
-              totalZombiesInWave: 6 + (currentWave + 1) * 4,
-              isWaveActive: true,
-            });
-          }, 3500);
-        }
-        return { ...w, zombiesRemaining: remaining };
+      setZombies((prev) => {
+        const filtered = prev.filter((z) => z.id !== zombieId);
+        setWaveState((w) => {
+          const remaining = filtered.length;
+          if (remaining === 0 && isHost) {
+            setTimeout(() => {
+              setCurrentWave((cw) => cw + 1);
+              setWaveState({
+                wave: currentWave + 1,
+                zombiesRemaining: 6 + (currentWave + 1) * 4,
+                totalZombiesInWave: 6 + (currentWave + 1) * 4,
+                isWaveActive: true,
+              });
+            }, 3500);
+          }
+          return { ...w, zombiesRemaining: remaining };
+        });
+        return filtered;
       });
-      return filtered;
-    });
-  }, [currentWave, isHost]);
+    },
+    [currentWave, isHost]
+  );
 
-  // Handle incoming network updates
+  // Incoming network sync
   useEffect(() => {
     if (!realtimeManager) return;
 
-    // Attach callbacks to network manager
     (realtimeManager as any).callbacks.onRemotePlayerUpdate = (player: PlayerNetState) => {
       setRemotePlayers((prev) => ({ ...prev, [player.id]: player }));
     };
@@ -163,7 +200,7 @@ export function GameCanvas({
     };
   }, [realtimeManager, isHost, localPlayerId, handleDamagePlayer, handleKillZombie]);
 
-  // Check Game Over condition (when local player and all remote players are dead)
+  // Game over check
   useEffect(() => {
     if (gameOver) return;
 
@@ -210,11 +247,14 @@ export function GameCanvas({
 
   const handleRestart = () => {
     setHealth(100);
-    setAmmo(30);
+    setStamina(100);
+    setAmmo(maxAmmo);
     setScore(0);
     setKills(0);
     setCurrentWave(1);
     setZombies([]);
+    setBloodPools([]);
+    setTracers([]);
     setGameOver(false);
     setMatchSummary(null);
     gameStartTime.current = Date.now();
@@ -222,7 +262,7 @@ export function GameCanvas({
   };
 
   return (
-    <div className="relative w-full h-screen bg-black overflow-hidden">
+    <div className="relative w-full h-screen bg-black overflow-hidden select-none">
       {/* 3D WebGL Canvas */}
       <Canvas
         shadows
@@ -230,25 +270,35 @@ export function GameCanvas({
         gl={{ antialias: true, powerPreference: 'high-performance' }}
       >
         <Scene />
-        
+
         {/* Local Player Controller */}
         <FirstPersonPlayer
           playerId={localPlayerId}
           playerName={localPlayerName}
           health={health}
+          stamina={stamina}
           ammo={ammo}
           maxAmmo={maxAmmo}
           isReloading={isReloading}
+          currentWeapon={currentWeapon}
+          perspective={perspective}
           onHealthChange={setHealth}
+          onStaminaChange={setStamina}
           onAmmoChange={setAmmo}
           onReloadStart={() => setIsReloading(true)}
           onReloadEnd={() => setIsReloading(false)}
           onShoot={() => {}}
           onHitMarker={handleHitMarker}
+          onWeaponChange={handleWeaponChange}
+          onPerspectiveChange={setPerspective}
+          onSpawnTracer={handleSpawnTracer}
+          onSpawnBloodPool={handleSpawnBloodPool}
           realtimeManager={realtimeManager}
           zombiesRef={zombiesRef}
           isLocked={isLocked}
           setIsLocked={setIsLocked}
+          isADS={isADS}
+          setIsADS={setIsADS}
         />
 
         {/* Remote Teammate Avatars */}
@@ -271,13 +321,17 @@ export function GameCanvas({
           waveState={waveState}
           setWaveState={setWaveState}
         />
+
+        {/* Bullet Tracers and Blood Pools */}
+        <ImpactEffects bloodPools={bloodPools} tracers={tracers} />
       </Canvas>
 
-      {/* Tactical In-game HUD */}
+      {/* WarZ Tactical HUD */}
       {!gameOver && (
         <GameHUD
           health={health}
           maxHealth={100}
+          stamina={stamina}
           ammo={ammo}
           maxAmmo={maxAmmo}
           isReloading={isReloading}
@@ -292,6 +346,9 @@ export function GameCanvas({
             canvas?.requestPointerLock();
           }}
           damageVignette={damageVignette}
+          currentWeapon={currentWeapon}
+          isADS={isADS}
+          perspective={perspective}
         />
       )}
 

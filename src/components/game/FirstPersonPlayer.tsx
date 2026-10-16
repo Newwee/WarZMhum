@@ -1,69 +1,88 @@
 'use client';
 
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { RealtimeManager } from '@/lib/network/realtime-manager';
 import { sounds } from '@/lib/audio/sound-effects';
 import { ShootEvent } from '@/types/game';
+import { WeaponModel } from './WeaponModel';
+import { SurvivorAvatar } from './SurvivorAvatar';
+import { BulletTracer, BloodPool } from './ImpactEffects';
 
 interface FirstPersonPlayerProps {
   playerId: string;
   playerName: string;
   health: number;
+  stamina: number;
   ammo: number;
   maxAmmo: number;
   isReloading: boolean;
+  currentWeapon: 'RIFLE' | 'PISTOL';
+  perspective: 'FPS' | 'TPS';
   onHealthChange: (hp: number) => void;
+  onStaminaChange: (stamina: number) => void;
   onAmmoChange: (ammo: number) => void;
   onReloadStart: () => void;
   onReloadEnd: () => void;
   onShoot: (event: ShootEvent) => void;
   onHitMarker: (isHeadshot: boolean) => void;
+  onWeaponChange: (weapon: 'RIFLE' | 'PISTOL') => void;
+  onPerspectiveChange: (p: 'FPS' | 'TPS') => void;
+  onSpawnTracer: (tracer: BulletTracer) => void;
+  onSpawnBloodPool: (pool: BloodPool) => void;
   realtimeManager: RealtimeManager | null;
   zombiesRef: React.MutableRefObject<any[]>;
   isLocked: boolean;
   setIsLocked: (locked: boolean) => void;
+  isADS: boolean;
+  setIsADS: (ads: boolean) => void;
 }
 
 export function FirstPersonPlayer({
   playerId,
   playerName,
   health,
+  stamina,
   ammo,
   maxAmmo,
   isReloading,
+  currentWeapon,
+  perspective,
   onHealthChange,
+  onStaminaChange,
   onAmmoChange,
   onReloadStart,
   onReloadEnd,
   onShoot,
   onHitMarker,
+  onWeaponChange,
+  onPerspectiveChange,
+  onSpawnTracer,
+  onSpawnBloodPool,
   realtimeManager,
   zombiesRef,
   isLocked,
   setIsLocked,
+  isADS,
+  setIsADS,
 }: FirstPersonPlayerProps) {
   const { camera, gl } = useThree();
 
-  // Position and velocity state
+  // Position and physics
   const pos = useRef(new THREE.Vector3(0, 1.7, 5));
   const velocity = useRef(new THREE.Vector3());
   const moveKeys = useRef({ forward: false, backward: false, left: false, right: false, sprint: false });
-
-  // Camera angles (yaw, pitch)
   const euler = useRef(new THREE.Euler(0, 0, 0, 'YXZ'));
   const isGrounded = useRef(true);
 
-  // Weapon sway & recoil refs
-  const gunRef = useRef<THREE.Group>(null);
-  const recoilOffset = useRef(0);
-  const muzzleFlash = useRef(false);
-
-  // Bobbing state
+  // Recoil & camera kick
+  const recoilVal = useRef(0);
+  const cameraKick = useRef(0);
+  const isShootingRef = useRef(false);
   const bobbingTimer = useRef(0);
 
-  // Setup pointer lock and mouse movement listeners
+  // Keyboard controls & Mouse lock listeners
   useEffect(() => {
     const canvas = gl.domElement;
 
@@ -73,18 +92,10 @@ export function FirstPersonPlayer({
 
     const onMouseMove = (e: MouseEvent) => {
       if (document.pointerLockElement !== canvas) return;
-
-      const movementX = e.movementX || 0;
-      const movementY = e.movementY || 0;
-
-      // Sensitivity
-      euler.current.y -= movementX * 0.0022;
-      euler.current.x -= movementY * 0.0022;
-
-      // Clamp vertical pitch (-85 to +85 degrees)
+      const sens = isADS ? 0.0012 : 0.0022; // Slower sensitivity when aiming down sights
+      euler.current.y -= (e.movementX || 0) * sens;
+      euler.current.x -= (e.movementY || 0) * sens;
       euler.current.x = Math.max(-Math.PI / 2.1, Math.min(Math.PI / 2.1, euler.current.x));
-
-      camera.quaternion.setFromEuler(euler.current);
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -94,15 +105,32 @@ export function FirstPersonPlayer({
       if (e.code === 'KeyD') moveKeys.current.right = true;
       if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') moveKeys.current.sprint = true;
 
-      // Space to Jump
+      // [Space] Jump
       if (e.code === 'Space' && isGrounded.current) {
         velocity.current.y = 5.5;
         isGrounded.current = false;
       }
 
-      // R to Reload
+      // [R] Reload
       if (e.code === 'KeyR' && ammo < maxAmmo && !isReloading) {
         handleReload();
+      }
+
+      // [1] Switch to M4A1 Rifle
+      if (e.code === 'Digit1' && currentWeapon !== 'RIFLE' && !isReloading) {
+        onWeaponChange('RIFLE');
+        sounds.playSwitchWeapon();
+      }
+
+      // [2] Switch to .45 Thunder Pistol
+      if (e.code === 'Digit2' && currentWeapon !== 'PISTOL' && !isReloading) {
+        onWeaponChange('PISTOL');
+        sounds.playSwitchWeapon();
+      }
+
+      // [V] Switch Perspective (FPS / TPS)
+      if (e.code === 'KeyV') {
+        onPerspectiveChange(perspective === 'FPS' ? 'TPS' : 'FPS');
       }
     };
 
@@ -120,15 +148,29 @@ export function FirstPersonPlayer({
         return;
       }
       if (e.button === 0) {
+        // Left Click: Shoot
         handleShoot();
+      } else if (e.button === 2) {
+        // Right Click: Aim Down Sights (ADS)
+        setIsADS(true);
       }
     };
+
+    const onMouseUp = (e: MouseEvent) => {
+      if (e.button === 2) {
+        setIsADS(false);
+      }
+    };
+
+    const onContextMenu = (e: MouseEvent) => e.preventDefault();
 
     document.addEventListener('pointerlockchange', onPointerLockChange);
     document.addEventListener('mousemove', onMouseMove);
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     canvas.addEventListener('mousedown', onMouseDown);
+    canvas.addEventListener('mouseup', onMouseUp);
+    canvas.addEventListener('contextmenu', onContextMenu);
 
     return () => {
       document.removeEventListener('pointerlockchange', onPointerLockChange);
@@ -136,8 +178,10 @@ export function FirstPersonPlayer({
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       canvas.removeEventListener('mousedown', onMouseDown);
+      canvas.removeEventListener('mouseup', onMouseUp);
+      canvas.removeEventListener('contextmenu', onContextMenu);
     };
-  }, [gl.domElement, ammo, maxAmmo, isReloading]);
+  }, [gl.domElement, ammo, maxAmmo, isReloading, currentWeapon, isADS, perspective]);
 
   const handleReload = () => {
     onReloadStart();
@@ -145,67 +189,102 @@ export function FirstPersonPlayer({
     setTimeout(() => {
       onAmmoChange(maxAmmo);
       onReloadEnd();
-    }, 1400);
+    }, 1300);
   };
 
   const handleShoot = () => {
-    if (health <= 0) return;
-    if (isReloading) return;
+    if (health <= 0 || isReloading) return;
     if (ammo <= 0) {
       sounds.playReload();
       handleReload();
       return;
     }
 
-    // Deduct ammo & recoil
     onAmmoChange(ammo - 1);
-    sounds.playGunshot();
-    recoilOffset.current = 0.08;
-    muzzleFlash.current = true;
+
+    // Audio by caliber
+    if (currentWeapon === 'PISTOL') {
+      sounds.playPistol();
+      recoilVal.current = 0.14;
+      cameraKick.current = 0.05;
+    } else {
+      sounds.playRifle();
+      recoilVal.current = 0.09;
+      cameraKick.current = 0.035;
+    }
+
+    isShootingRef.current = true;
     setTimeout(() => {
-      muzzleFlash.current = false;
-    }, 50);
+      isShootingRef.current = false;
+    }, 60);
 
-    // Raycast forward from camera
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
-
+    // Camera Direction & Raycast
     const forwardDir = new THREE.Vector3();
     camera.getWorldDirection(forwardDir);
 
-    let hitZombieId: string | undefined;
-    let hitDamage = 35;
-    let isHeadshot = false;
+    // Bullet spread: tighter when ADS
+    const spread = isADS ? 0.005 : 0.025;
+    forwardDir.x += (Math.random() - 0.5) * spread;
+    forwardDir.y += (Math.random() - 0.5) * spread;
+    forwardDir.normalize();
 
-    // Check collision against active zombies
+    let hitZombieId: string | undefined;
+    let hitDamage = currentWeapon === 'PISTOL' ? 45 : 32;
+    let isHeadshot = false;
+    let hitPos = pos.current.clone().add(forwardDir.clone().multiplyScalar(60));
+
+    // Collision check against zombies
     const zombies = zombiesRef.current || [];
-    let closestDist = 60; // Max weapon range
+    let closestDist = 60;
 
     for (const zombie of zombies) {
       if (zombie.health <= 0) continue;
       const zPos = new THREE.Vector3(zombie.position[0], zombie.position[1] + 1.0, zombie.position[2]);
-      
-      // Calculate distance to ray
       const toZombie = zPos.clone().sub(pos.current);
       const proj = toZombie.dot(forwardDir);
-      
+
       if (proj > 0 && proj < closestDist) {
         const perpDist = toZombie.clone().sub(forwardDir.clone().multiplyScalar(proj)).length();
-        if (perpDist < 0.9) {
+        if (perpDist < 0.85) {
           closestDist = proj;
           hitZombieId = zombie.id;
-          // Headshot check if looking slightly above waist
+          hitPos = pos.current.clone().add(forwardDir.clone().multiplyScalar(proj));
+
+          // Headshot calculation
           if (perpDist < 0.35) {
             isHeadshot = true;
-            hitDamage = 75;
+            hitDamage = currentWeapon === 'PISTOL' ? 110 : 80;
           }
         }
       }
     }
 
+    // Spawn 3D Bullet Tracer
+    const gunMuzzlePos = pos.current.clone().add(new THREE.Vector3(0.2, -0.2, 0).applyEuler(euler.current));
+    onSpawnTracer({
+      id: `tracer_${Date.now()}_${Math.random()}`,
+      start: [gunMuzzlePos.x, gunMuzzlePos.y, gunMuzzlePos.z],
+      end: [hitPos.x, hitPos.y, hitPos.z],
+      life: 1.0,
+    });
+
     if (hitZombieId) {
-      sounds.playZombieHit();
+      if (isHeadshot) {
+        sounds.playHeadshot();
+      } else {
+        sounds.playZombieHit();
+      }
       onHitMarker(isHeadshot);
+
+      // Spawn blood pool on ground
+      onSpawnBloodPool({
+        id: `blood_${Date.now()}_${Math.random()}`,
+        x: hitPos.x,
+        z: hitPos.z,
+        radius: isHeadshot ? 1.2 : 0.8,
+        rotation: Math.random() * Math.PI * 2,
+      });
+
       realtimeManager?.sendZombieDamaged(hitZombieId, hitDamage, playerId);
     }
 
@@ -226,29 +305,32 @@ export function FirstPersonPlayer({
   useFrame((_, delta) => {
     if (health <= 0) return;
 
-    // Smooth movement calculation
-    const speed = moveKeys.current.sprint ? 7.5 : 4.5;
-    const inputDir = new THREE.Vector3();
+    // Stamina & Sprinting System
+    let isSprinting = moveKeys.current.sprint && stamina > 5;
+    if (isSprinting) {
+      onStaminaChange(Math.max(0, stamina - delta * 20));
+    } else {
+      onStaminaChange(Math.min(100, stamina + delta * 12));
+    }
 
+    const speed = isSprinting ? 7.8 : isADS ? 2.8 : 4.6;
+    const inputDir = new THREE.Vector3();
     if (moveKeys.current.forward) inputDir.z -= 1;
     if (moveKeys.current.backward) inputDir.z += 1;
     if (moveKeys.current.left) inputDir.x -= 1;
     if (moveKeys.current.right) inputDir.x += 1;
-
     inputDir.normalize();
 
-    // Move relative to player's horizontal camera yaw
     const yaw = euler.current.y;
     const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
     const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
-
     const moveVector = forward.multiplyScalar(-inputDir.z).add(right.multiplyScalar(inputDir.x));
     moveVector.multiplyScalar(speed * delta);
 
     pos.current.x += moveVector.x;
     pos.current.z += moveVector.z;
 
-    // Simple gravity & ground collision
+    // Gravity
     if (!isGrounded.current) {
       velocity.current.y -= 15 * delta;
       pos.current.y += velocity.current.y * delta;
@@ -259,28 +341,44 @@ export function FirstPersonPlayer({
       }
     }
 
-    // World boundary clamping (-38 to +38)
-    pos.current.x = Math.max(-38, Math.min(38, pos.current.x));
-    pos.current.z = Math.max(-38, Math.min(38, pos.current.z));
+    pos.current.x = Math.max(-55, Math.min(55, pos.current.x));
+    pos.current.z = Math.max(-55, Math.min(55, pos.current.z));
 
-    // Head bobbing when walking
+    // Head bobbing
     const isMoving = inputDir.lengthSq() > 0 && isGrounded.current;
     let bobOffset = 0;
     if (isMoving) {
-      bobbingTimer.current += delta * (moveKeys.current.sprint ? 14 : 9);
+      bobbingTimer.current += delta * (isSprinting ? 15 : 9);
       bobOffset = Math.sin(bobbingTimer.current) * 0.05;
     }
 
-    camera.position.set(pos.current.x, pos.current.y + bobOffset, pos.current.z);
+    // Recoil recovery
+    recoilVal.current = THREE.MathUtils.lerp(recoilVal.current, 0, delta * 16);
+    cameraKick.current = THREE.MathUtils.lerp(cameraKick.current, 0, delta * 14);
 
-    // Weapon sway & recoil animation
-    if (gunRef.current) {
-      recoilOffset.current = THREE.MathUtils.lerp(recoilOffset.current, 0, delta * 12);
-      gunRef.current.position.set(0.25, -0.22 + bobOffset * 0.5, -0.5 + recoilOffset.current);
-      gunRef.current.rotation.set(-recoilOffset.current * 1.5, 0, 0);
+    // Camera angles
+    const effectivePitch = euler.current.x - cameraKick.current;
+    camera.quaternion.setFromEuler(new THREE.Euler(effectivePitch, euler.current.y, 0, 'YXZ'));
+
+    // Camera FOV transition for ADS zoom
+    const targetFov = isADS ? (currentWeapon === 'RIFLE' ? 52 : 62) : 75;
+    (camera as THREE.PerspectiveCamera).fov = THREE.MathUtils.lerp(
+      (camera as THREE.PerspectiveCamera).fov,
+      targetFov,
+      delta * 14
+    );
+    (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
+
+    // Perspective Positioning
+    if (perspective === 'FPS') {
+      camera.position.set(pos.current.x, pos.current.y + bobOffset, pos.current.z);
+    } else {
+      // Third Person Over-The-Shoulder (WarZ Image 2)
+      const tpsOffset = new THREE.Vector3(0.65, 0.3, 2.4).applyEuler(new THREE.Euler(0, euler.current.y, 0));
+      camera.position.set(pos.current.x + tpsOffset.x, pos.current.y + 0.3 + tpsOffset.y, pos.current.z + tpsOffset.z);
     }
 
-    // Broadcast position to teammates at 10 Hz
+    // Network position broadcast
     realtimeManager?.sendPosition({
       id: playerId,
       name: playerName,
@@ -288,8 +386,8 @@ export function FirstPersonPlayer({
         position: [pos.current.x, pos.current.y, pos.current.z],
         rotation: [euler.current.x, euler.current.y, 0],
         isMoving,
-        isShooting: muzzleFlash.current,
-        currentWeapon: 'AR-15',
+        isShooting: isShootingRef.current,
+        currentWeapon,
       },
       health,
       maxHealth: 100,
@@ -301,23 +399,27 @@ export function FirstPersonPlayer({
 
   return (
     <>
-      {/* First-person weapon attached to camera view */}
-      <group ref={gunRef}>
-        {/* Rifle Body */}
-        <mesh position={[0, 0, 0]}>
-          <boxGeometry args={[0.06, 0.09, 0.55]} />
-          <meshStandardMaterial color="#2b2d2f" roughness={0.4} metalness={0.8} />
-        </mesh>
-        {/* Barrel */}
-        <mesh position={[0, 0.02, -0.35]} rotation={[Math.PI / 2, 0, 0]}>
-          <cylinderGeometry args={[0.015, 0.015, 0.35, 8]} />
-          <meshStandardMaterial color="#1a1a1a" roughness={0.3} metalness={0.9} />
-        </mesh>
-        {/* Muzzle Flash Light */}
-        {muzzleFlash.current && (
-          <pointLight position={[0, 0.02, -0.55]} color="#ff9900" intensity={3} distance={5} />
-        )}
-      </group>
+      {/* FPS: Weapon Model in front of camera */}
+      {perspective === 'FPS' && (
+        <WeaponModel
+          weaponType={currentWeapon}
+          isADS={isADS}
+          isShooting={isShootingRef.current}
+          recoil={recoilVal.current}
+          bobOffset={bobbingTimer.current}
+        />
+      )}
+
+      {/* TPS: Full Survivor Avatar with backpack and helmet */}
+      {perspective === 'TPS' && (
+        <group position={[pos.current.x, 0, pos.current.z]} rotation={[0, euler.current.y, 0]}>
+          <SurvivorAvatar
+            currentWeapon={currentWeapon}
+            isShooting={isShootingRef.current}
+            isMoving={moveKeys.current.forward || moveKeys.current.backward}
+          />
+        </group>
+      )}
     </>
   );
 }
