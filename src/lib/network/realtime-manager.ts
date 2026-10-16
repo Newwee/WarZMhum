@@ -1,0 +1,297 @@
+import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
+import { Room, RoomMember, PlayerNetState, ZombieNetState, ShootEvent, WaveState, MatchSummary } from '@/types/game';
+import { RealtimeChannel } from '@supabase/supabase-js';
+
+export interface NetworkCallbacks {
+  onMembersChange?: (members: RoomMember[]) => void;
+  onRoomStatusChange?: (status: Room['status']) => void;
+  onRemotePlayerUpdate?: (player: PlayerNetState) => void;
+  onRemotePlayerShoot?: (event: ShootEvent) => void;
+  onZombieSync?: (zombies: ZombieNetState[]) => void;
+  onZombieDamaged?: (data: { zombieId: string; damage: number; attackerId: string }) => void;
+  onPlayerDamaged?: (data: { playerId: string; damage: number }) => void;
+  onWaveChange?: (wave: WaveState) => void;
+  onGameOver?: (summary: MatchSummary) => void;
+}
+
+export class RealtimeManager {
+  private channel: RealtimeChannel | null = null;
+  private localBroadcast: BroadcastChannel | null = null;
+  private roomCode: string = '';
+  private currentUserId: string = '';
+  private callbacks: NetworkCallbacks = {};
+  private isHost: boolean = false;
+  private lastPositionSendTime: number = 0;
+  private readonly POSITION_SEND_INTERVAL = 100; // 10 Hz (every 100ms)
+
+  constructor(roomCode: string, currentUserId: string, isHost: boolean, callbacks: NetworkCallbacks) {
+    this.roomCode = roomCode.toUpperCase();
+    this.currentUserId = currentUserId;
+    this.isHost = isHost;
+    this.callbacks = callbacks;
+  }
+
+  public async connect(userDisplayName: string): Promise<boolean> {
+    const supabase = getSupabase();
+
+    if (isSupabaseConfigured && supabase) {
+      // Connect using Supabase Realtime
+      const channelName = `warz_room_${this.roomCode}`;
+      this.channel = supabase.channel(channelName, {
+        config: {
+          presence: { key: this.currentUserId },
+          broadcast: { self: false },
+        },
+      });
+
+      // Listen for presence state (players in room)
+      this.channel.on('presence', { event: 'sync' }, () => {
+        const state = this.channel?.presenceState() || {};
+        const members: RoomMember[] = [];
+        
+        Object.entries(state).forEach(([key, presences]) => {
+          const latest = presences[presences.length - 1] as any;
+          if (latest) {
+            members.push({
+              id: key,
+              room_id: this.roomCode,
+              profile_id: key,
+              role: latest.role || (key === this.currentUserId && this.isHost ? 'HOST' : 'PLAYER'),
+              is_ready: Boolean(latest.is_ready),
+              display_name: latest.name || 'Survivor',
+              joined_at: latest.joined_at || new Date().toISOString(),
+            });
+          }
+        });
+
+        this.callbacks.onMembersChange?.(members);
+      });
+
+      // Listen for broadcasts
+      this.channel
+        .on('broadcast', { event: 'room_status' }, ({ payload }) => {
+          this.callbacks.onRoomStatusChange?.(payload.status);
+        })
+        .on('broadcast', { event: 'player_pos' }, ({ payload }) => {
+          if (payload.id !== this.currentUserId) {
+            this.callbacks.onRemotePlayerUpdate?.(payload);
+          }
+        })
+        .on('broadcast', { event: 'player_shoot' }, ({ payload }) => {
+          if (payload.shooterId !== this.currentUserId) {
+            this.callbacks.onRemotePlayerShoot?.(payload);
+          }
+        })
+        .on('broadcast', { event: 'zombie_sync' }, ({ payload }) => {
+          this.callbacks.onZombieSync?.(payload.zombies);
+        })
+        .on('broadcast', { event: 'zombie_damage' }, ({ payload }) => {
+          this.callbacks.onZombieDamaged?.(payload);
+        })
+        .on('broadcast', { event: 'player_damage' }, ({ payload }) => {
+          this.callbacks.onPlayerDamaged?.(payload);
+        })
+        .on('broadcast', { event: 'wave_state' }, ({ payload }) => {
+          this.callbacks.onWaveChange?.(payload);
+        })
+        .on('broadcast', { event: 'game_over' }, ({ payload }) => {
+          this.callbacks.onGameOver?.(payload);
+        });
+
+      // Subscribe and track presence
+      await new Promise<void>((resolve) => {
+        this.channel?.subscribe(async (status) => {
+          if (status === 'SUBSCRIBED') {
+            await this.channel?.track({
+              userId: this.currentUserId,
+              name: userDisplayName,
+              role: this.isHost ? 'HOST' : 'PLAYER',
+              is_ready: this.isHost ? true : false,
+              joined_at: new Date().toISOString(),
+            });
+            resolve();
+          }
+        });
+      });
+
+      return true;
+    } else {
+      // Offline / Local Multi-tab Fallback using browser BroadcastChannel
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        this.localBroadcast = new BroadcastChannel(`warz_local_${this.roomCode}`);
+        this.localBroadcast.onmessage = (event) => {
+          const { type, payload } = event.data || {};
+          if (type === 'room_status') this.callbacks.onRoomStatusChange?.(payload.status);
+          if (type === 'player_pos' && payload.id !== this.currentUserId) this.callbacks.onRemotePlayerUpdate?.(payload);
+          if (type === 'player_shoot' && payload.shooterId !== this.currentUserId) this.callbacks.onRemotePlayerShoot?.(payload);
+          if (type === 'zombie_sync') this.callbacks.onZombieSync?.(payload.zombies);
+          if (type === 'zombie_damage') this.callbacks.onZombieDamaged?.(payload);
+          if (type === 'player_damage') this.callbacks.onPlayerDamaged?.(payload);
+          if (type === 'wave_state') this.callbacks.onWaveChange?.(payload);
+          if (type === 'game_over') this.callbacks.onGameOver?.(payload);
+        };
+      }
+      return true;
+    }
+  }
+
+  public sendPosition(state: PlayerNetState) {
+    const now = performance.now();
+    if (now - this.lastPositionSendTime < this.POSITION_SEND_INTERVAL) {
+      return;
+    }
+    this.lastPositionSendTime = now;
+
+    if (this.channel) {
+      this.channel.send({
+        type: 'broadcast',
+        event: 'player_pos',
+        payload: state,
+      });
+    } else if (this.localBroadcast) {
+      this.localBroadcast.postMessage({
+        type: 'player_pos',
+        payload: state,
+      });
+    }
+  }
+
+  public sendShoot(event: ShootEvent) {
+    if (this.channel) {
+      this.channel.send({
+        type: 'broadcast',
+        event: 'player_shoot',
+        payload: event,
+      });
+    } else if (this.localBroadcast) {
+      this.localBroadcast.postMessage({
+        type: 'player_shoot',
+        payload: event,
+      });
+    }
+  }
+
+  public sendZombieSync(zombies: ZombieNetState[]) {
+    if (!this.isHost) return; // Only host sends authoritative zombie coordinates
+    if (this.channel) {
+      this.channel.send({
+        type: 'broadcast',
+        event: 'zombie_sync',
+        payload: { zombies },
+      });
+    } else if (this.localBroadcast) {
+      this.localBroadcast.postMessage({
+        type: 'zombie_sync',
+        payload: { zombies },
+      });
+    }
+  }
+
+  public sendZombieDamaged(zombieId: string, damage: number, attackerId: string) {
+    const payload = { zombieId, damage, attackerId };
+    if (this.channel) {
+      this.channel.send({
+        type: 'broadcast',
+        event: 'zombie_damage',
+        payload,
+      });
+    } else if (this.localBroadcast) {
+      this.localBroadcast.postMessage({
+        type: 'zombie_damage',
+        payload,
+      });
+    }
+  }
+
+  public sendPlayerDamaged(playerId: string, damage: number) {
+    const payload = { playerId, damage };
+    if (this.channel) {
+      this.channel.send({
+        type: 'broadcast',
+        event: 'player_damage',
+        payload,
+      });
+    } else if (this.localBroadcast) {
+      this.localBroadcast.postMessage({
+        type: 'player_damage',
+        payload,
+      });
+    }
+  }
+
+  public sendWaveState(wave: WaveState) {
+    if (!this.isHost) return;
+    if (this.channel) {
+      this.channel.send({
+        type: 'broadcast',
+        event: 'wave_state',
+        payload: wave,
+      });
+    } else if (this.localBroadcast) {
+      this.localBroadcast.postMessage({
+        type: 'wave_state',
+        payload: wave,
+      });
+    }
+  }
+
+  public sendStartGame() {
+    if (!this.isHost) return;
+    const payload = { status: 'IN_PROGRESS' as const };
+    if (this.channel) {
+      this.channel.send({
+        type: 'broadcast',
+        event: 'room_status',
+        payload,
+      });
+    } else if (this.localBroadcast) {
+      this.localBroadcast.postMessage({
+        type: 'room_status',
+        payload,
+      });
+    }
+    this.callbacks.onRoomStatusChange?.('IN_PROGRESS');
+  }
+
+  public sendGameOver(summary: MatchSummary) {
+    if (!this.isHost) return;
+    if (this.channel) {
+      this.channel.send({
+        type: 'broadcast',
+        event: 'game_over',
+        payload: summary,
+      });
+    } else if (this.localBroadcast) {
+      this.localBroadcast.postMessage({
+        type: 'game_over',
+        payload: summary,
+      });
+    }
+  }
+
+  public async updateReadyStatus(isReady: boolean, userDisplayName: string) {
+    if (this.channel) {
+      await this.channel.track({
+        userId: this.currentUserId,
+        name: userDisplayName,
+        role: this.isHost ? 'HOST' : 'PLAYER',
+        is_ready: isReady,
+        joined_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  public disconnect() {
+    if (this.channel) {
+      const supabase = getSupabase();
+      if (supabase) {
+        supabase.removeChannel(this.channel);
+      }
+      this.channel = null;
+    }
+    if (this.localBroadcast) {
+      this.localBroadcast.close();
+      this.localBroadcast = null;
+    }
+  }
+}
