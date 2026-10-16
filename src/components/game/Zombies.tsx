@@ -44,29 +44,40 @@ export function Zombies({
   const lastSyncTime = useRef(0);
   const lastAttackTime = useRef<Record<string, number>>({});
   const lastMoanTime = useRef(0);
+  const wanderData = useRef<Record<string, { angle: number; timer: number; isMoving: boolean }>>({});
 
   // Sync ref with state
   useEffect(() => {
     zombiesRef.current = zombies;
   }, [zombies, zombiesRef]);
 
+  // Detection range based on zombie type
+  const getDetectionRange = (type: ZombieType): number => {
+    switch (type) {
+      case 'TANK':
+        return 24; // Tanks sense players from 24m
+      case 'RUNNER':
+        return 20; // Runners hear and smell from 20m
+      default:
+        return 16; // Standard Walkers detect at 16m
+    }
+  };
+
   // Host spawns wave when needed
   useEffect(() => {
     if (!isHost) return;
 
     if (zombies.length === 0 && waveState.isWaveActive) {
-      // Calculate wave size: 5 + (wave * 4)
       const count = Math.min(30, 4 + currentWave * 4);
       const newZombies: ZombieNetState[] = [];
 
       for (let i = 0; i < count; i++) {
         // Spawn along perimeter (-36 to 36)
         const angle = Math.random() * Math.PI * 2;
-        const radius = 32 + Math.random() * 6;
+        const radius = 30 + Math.random() * 8;
         const x = Math.cos(angle) * radius;
         const z = Math.sin(angle) * radius;
 
-        // Determine zombie type
         let type: ZombieType = 'WALKER';
         let health = 60;
         let speed = 2.4;
@@ -86,11 +97,11 @@ export function Zombies({
           id: `zombie_${currentWave}_${i}_${Date.now()}`,
           type,
           position: [x, 0, z],
-          rotation: 0,
+          rotation: Math.random() * Math.PI * 2,
           health,
           maxHealth: health,
           speed,
-          state: 'CHASING',
+          state: 'IDLE', // Initially Idle/Wandering until player comes in range
         });
       }
 
@@ -125,13 +136,16 @@ export function Zombies({
     const now = Date.now();
 
     // Random zombie atmospheric moan
-    if (now - lastMoanTime.current > 6000 && Math.random() < 0.05) {
+    if (now - lastMoanTime.current > 7000 && Math.random() < 0.04) {
       lastMoanTime.current = now;
       sounds.playZombieMoan();
     }
 
     const nextZombies = zombies.map((zombie) => {
       if (zombie.health <= 0) return zombie;
+
+      const detectionRange = getDetectionRange(zombie.type);
+      const isDamaged = zombie.health < zombie.maxHealth;
 
       // Find closest survivor
       let closestDist = Infinity;
@@ -149,44 +163,94 @@ export function Zombies({
         }
       }
 
-      // Compute movement direction towards target
-      const dirX = targetPos[0] - zombie.position[0];
-      const dirZ = targetPos[2] - zombie.position[2];
-      const angle = Math.atan2(dirX, dirZ);
+      // Check whether zombie should chase:
+      // 1. Player is within detection range (16m - 24m)
+      // 2. OR zombie was damaged (shot by a player)
+      // 3. OR zombie is actively in 'CHASING' or 'ATTACKING' and hasn't lost player yet (< 32m)
+      const isWithinAggro = closestDist <= detectionRange;
+      const isAlreadyChasing = (zombie.state === 'CHASING' || zombie.state === 'ATTACKING') && closestDist <= 32;
+      const shouldChase = isDamaged || isWithinAggro || isAlreadyChasing;
 
-      // Attack if close enough (< 1.6 units)
-      if (closestDist < 1.6) {
-        const lastAtk = lastAttackTime.current[zombie.id] || 0;
-        if (now - lastAtk > 1200) {
-          lastAttackTime.current[zombie.id] = now;
-          const damage = zombie.type === 'TANK' ? 30 : 15;
-          if (targetId === localPlayerId) {
-            onDamagePlayer(damage);
-          } else {
-            realtimeManager?.sendPlayerDamaged(targetId, damage);
+      if (shouldChase) {
+        // Direction to survivor
+        const dirX = targetPos[0] - zombie.position[0];
+        const dirZ = targetPos[2] - zombie.position[2];
+        const angle = Math.atan2(dirX, dirZ);
+
+        // Attack if close enough (< 1.6 units)
+        if (closestDist < 1.6) {
+          const lastAtk = lastAttackTime.current[zombie.id] || 0;
+          if (now - lastAtk > 1200) {
+            lastAttackTime.current[zombie.id] = now;
+            const damage = zombie.type === 'TANK' ? 30 : 15;
+            if (targetId === localPlayerId) {
+              onDamagePlayer(damage);
+            } else {
+              realtimeManager?.sendPlayerDamaged(targetId, damage);
+            }
+            sounds.playPlayerHurt();
           }
-          sounds.playPlayerHurt();
+          return {
+            ...zombie,
+            rotation: angle,
+            state: 'ATTACKING' as const,
+            targetPlayerId: targetId,
+          };
         }
+
+        // Sprint towards survivor at full speed
+        const step = zombie.speed * delta;
+        const newX = zombie.position[0] + Math.sin(angle) * step;
+        const newZ = zombie.position[2] + Math.cos(angle) * step;
+        updated = true;
+
         return {
           ...zombie,
+          position: [newX, 0, newZ] as [number, number, number],
           rotation: angle,
-          state: 'ATTACKING' as const,
+          state: 'CHASING' as const,
+          targetPlayerId: targetId,
         };
+      } else {
+        // Player is OUTSIDE range: Idle standing or slow wandering
+        if (!wanderData.current[zombie.id]) {
+          wanderData.current[zombie.id] = {
+            angle: zombie.rotation || Math.random() * Math.PI * 2,
+            timer: 2 + Math.random() * 4,
+            isMoving: Math.random() > 0.45,
+          };
+        }
+
+        const wd = wanderData.current[zombie.id];
+        wd.timer -= delta;
+        if (wd.timer <= 0) {
+          wd.angle += (Math.random() - 0.5) * 1.8;
+          wd.timer = 3 + Math.random() * 5;
+          wd.isMoving = Math.random() > 0.4; // 60% chance moving slowly, 40% resting idle
+        }
+
+        if (wd.isMoving) {
+          const wanderSpeed = 0.65; // slow zombie stumble
+          const step = wanderSpeed * delta;
+          const newX = Math.max(-50, Math.min(50, zombie.position[0] + Math.sin(wd.angle) * step));
+          const newZ = Math.max(-50, Math.min(50, zombie.position[2] + Math.cos(wd.angle) * step));
+          updated = true;
+
+          return {
+            ...zombie,
+            position: [newX, 0, newZ] as [number, number, number],
+            rotation: wd.angle,
+            state: 'WANDERING' as const,
+            targetPlayerId: undefined,
+          };
+        } else {
+          return {
+            ...zombie,
+            state: 'IDLE' as const,
+            targetPlayerId: undefined,
+          };
+        }
       }
-
-      // Move towards survivor
-      const step = zombie.speed * delta;
-      const newX = zombie.position[0] + Math.sin(angle) * step;
-      const newZ = zombie.position[2] + Math.cos(angle) * step;
-
-      updated = true;
-      return {
-        ...zombie,
-        position: [newX, 0, newZ] as [number, number, number],
-        rotation: angle,
-        state: 'CHASING' as const,
-        targetPlayerId: targetId,
-      };
     });
 
     if (updated) {
@@ -210,6 +274,9 @@ export function Zombies({
         const scale = isTank ? 1.4 : isRunner ? 0.9 : 1.0;
         const skinColor = isTank ? '#2d4739' : isRunner ? '#652323' : '#475549';
 
+        const isChasingOrAttacking = zombie.state === 'CHASING' || zombie.state === 'ATTACKING';
+        const armPitch = isChasingOrAttacking ? Math.PI / 2.2 : Math.PI / 5.5;
+
         return (
           <group
             key={zombie.id}
@@ -217,11 +284,13 @@ export function Zombies({
             rotation={[0, zombie.rotation, 0]}
             scale={[scale, scale, scale]}
           >
-            {/* Health Bar above zombie */}
+            {/* Health Bar above zombie (visible when damaged or in aggro) */}
             <Html position={[0, 2.2, 0]} center distanceFactor={16}>
               <div className="w-12 h-1 bg-black/80 rounded border border-zinc-800 overflow-hidden pointer-events-none">
                 <div
-                  className={`h-full ${isTank ? 'bg-purple-500' : isRunner ? 'bg-amber-500' : 'bg-red-600'} transition-all`}
+                  className={`h-full ${
+                    isTank ? 'bg-purple-500' : isRunner ? 'bg-amber-500' : 'bg-red-600'
+                  } transition-all`}
                   style={{ width: `${Math.max(0, (zombie.health / zombie.maxHealth) * 100)}%` }}
                 />
               </div>
@@ -236,11 +305,11 @@ export function Zombies({
             {/* Glowing Eerie Eyes */}
             <mesh position={[0.08, 1.85, 0.2]}>
               <sphereGeometry args={[0.03, 8, 8]} />
-              <meshBasicMaterial color="#ef4444" />
+              <meshBasicMaterial color={isChasingOrAttacking ? '#ff0000' : '#882222'} />
             </mesh>
             <mesh position={[-0.08, 1.85, 0.2]}>
               <sphereGeometry args={[0.03, 8, 8]} />
-              <meshBasicMaterial color="#ef4444" />
+              <meshBasicMaterial color={isChasingOrAttacking ? '#ff0000' : '#882222'} />
             </mesh>
 
             {/* Torso with blood stains */}
@@ -249,12 +318,12 @@ export function Zombies({
               <meshStandardMaterial color="#1a201c" roughness={0.8} />
             </mesh>
 
-            {/* Reaching Arms (Zombie pose) */}
-            <mesh position={[0.25, 1.35, 0.35]} rotation={[Math.PI / 2.2, 0, -0.2]}>
+            {/* Arms - Reach forward only when chasing/attacking, otherwise hang low */}
+            <mesh position={[0.25, 1.35, isChasingOrAttacking ? 0.35 : 0.1]} rotation={[armPitch, 0, -0.2]}>
               <cylinderGeometry args={[0.08, 0.08, 0.65, 8]} />
               <meshStandardMaterial color={skinColor} roughness={0.9} />
             </mesh>
-            <mesh position={[-0.25, 1.35, 0.35]} rotation={[Math.PI / 2.2, 0, 0.2]}>
+            <mesh position={[-0.25, 1.35, isChasingOrAttacking ? 0.35 : 0.1]} rotation={[armPitch, 0, 0.2]}>
               <cylinderGeometry args={[0.08, 0.08, 0.65, 8]} />
               <meshStandardMaterial color={skinColor} roughness={0.9} />
             </mesh>

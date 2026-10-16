@@ -27,6 +27,7 @@ interface FirstPersonPlayerProps {
   onReloadEnd: () => void;
   onShoot: (event: ShootEvent) => void;
   onHitMarker: (isHeadshot: boolean) => void;
+  onHitZombie: (zombieId: string, damage: number, isHeadshot: boolean) => void;
   onWeaponChange: (weapon: 'RIFLE' | 'PISTOL') => void;
   onPerspectiveChange: (p: 'FPS' | 'TPS') => void;
   onSpawnTracer: (tracer: BulletTracer) => void;
@@ -56,6 +57,7 @@ export function FirstPersonPlayer({
   onReloadEnd,
   onShoot,
   onHitMarker,
+  onHitZombie,
   onWeaponChange,
   onPerspectiveChange,
   onSpawnTracer,
@@ -218,49 +220,63 @@ export function FirstPersonPlayer({
       isShootingRef.current = false;
     }, 60);
 
-    // Camera Direction & Raycast
+    // Camera Direction & Raycast from actual camera view
+    const rayOrigin = camera.position.clone();
     const forwardDir = new THREE.Vector3();
     camera.getWorldDirection(forwardDir);
 
     // Bullet spread: tighter when ADS
-    const spread = isADS ? 0.005 : 0.025;
+    const spread = isADS ? 0.004 : 0.02;
     forwardDir.x += (Math.random() - 0.5) * spread;
     forwardDir.y += (Math.random() - 0.5) * spread;
     forwardDir.normalize();
 
     let hitZombieId: string | undefined;
-    let hitDamage = currentWeapon === 'PISTOL' ? 45 : 32;
+    let hitDamage = currentWeapon === 'PISTOL' ? 50 : 35;
     let isHeadshot = false;
-    let hitPos = pos.current.clone().add(forwardDir.clone().multiplyScalar(60));
+    let hitPos = rayOrigin.clone().add(forwardDir.clone().multiplyScalar(75));
 
-    // Collision check against zombies
+    // Collision check against zombies with cylinder capsule hitbox
     const zombies = zombiesRef.current || [];
-    let closestDist = 60;
+    let closestDist = 75;
 
     for (const zombie of zombies) {
       if (zombie.health <= 0) continue;
-      const zPos = new THREE.Vector3(zombie.position[0], zombie.position[1] + 1.0, zombie.position[2]);
-      const toZombie = zPos.clone().sub(pos.current);
+      const zX = zombie.position[0];
+      const zZ = zombie.position[2];
+      const zRadius = zombie.type === 'TANK' ? 1.4 : 1.0;
+
+      // Vector from camera to zombie center
+      const toZombie = new THREE.Vector3(zX - rayOrigin.x, 1.0 - rayOrigin.y, zZ - rayOrigin.z);
       const proj = toZombie.dot(forwardDir);
 
-      if (proj > 0 && proj < closestDist) {
-        const perpDist = toZombie.clone().sub(forwardDir.clone().multiplyScalar(proj)).length();
-        if (perpDist < 0.85) {
+      if (proj > 0.5 && proj < closestDist) {
+        // Point along ray closest to zombie
+        const rayPoint = rayOrigin.clone().add(forwardDir.clone().multiplyScalar(proj));
+        const horizDist = Math.hypot(rayPoint.x - zX, rayPoint.z - zZ);
+
+        // Check vertical height and cylinder radius
+        if (horizDist < zRadius && rayPoint.y >= -0.2 && rayPoint.y <= 2.3) {
           closestDist = proj;
           hitZombieId = zombie.id;
-          hitPos = pos.current.clone().add(forwardDir.clone().multiplyScalar(proj));
+          hitPos = rayPoint;
 
-          // Headshot calculation
-          if (perpDist < 0.35) {
+          // Headshot if hit above shoulder line
+          if (rayPoint.y >= 1.45 && horizDist < 0.5) {
             isHeadshot = true;
-            hitDamage = currentWeapon === 'PISTOL' ? 110 : 80;
+            hitDamage = currentWeapon === 'PISTOL' ? 120 : 85;
+          } else {
+            isHeadshot = false;
+            hitDamage = currentWeapon === 'PISTOL' ? 50 : 35;
           }
         }
       }
     }
 
-    // Spawn 3D Bullet Tracer
-    const gunMuzzlePos = pos.current.clone().add(new THREE.Vector3(0.2, -0.2, 0).applyEuler(euler.current));
+    // Spawn 3D Bullet Tracer from gun position
+    const gunMuzzlePos = camera.position.clone().add(
+      new THREE.Vector3(0.2, -0.2, -0.4).applyQuaternion(camera.quaternion)
+    );
     onSpawnTracer({
       id: `tracer_${Date.now()}_${Math.random()}`,
       start: [gunMuzzlePos.x, gunMuzzlePos.y, gunMuzzlePos.z],
@@ -269,6 +285,9 @@ export function FirstPersonPlayer({
     });
 
     if (hitZombieId) {
+      // 1. Apply damage locally IMMEDIATELY so HP bar drops and kills register
+      onHitZombie(hitZombieId, hitDamage, isHeadshot);
+
       if (isHeadshot) {
         sounds.playHeadshot();
       } else {
@@ -281,10 +300,11 @@ export function FirstPersonPlayer({
         id: `blood_${Date.now()}_${Math.random()}`,
         x: hitPos.x,
         z: hitPos.z,
-        radius: isHeadshot ? 1.2 : 0.8,
+        radius: isHeadshot ? 1.3 : 0.85,
         rotation: Math.random() * Math.PI * 2,
       });
 
+      // 2. Broadcast damage to other players
       realtimeManager?.sendZombieDamaged(hitZombieId, hitDamage, playerId);
     }
 

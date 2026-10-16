@@ -52,7 +52,7 @@ export interface ZombieNetState {
   health: number;
   maxHealth: number;
   speed: number;
-  state: 'CHASING' | 'ATTACKING' | 'DEAD';
+  state: 'IDLE' | 'WANDERING' | 'CHASING' | 'ATTACKING' | 'DEAD';
   targetPlayerId?: string;
 }
 

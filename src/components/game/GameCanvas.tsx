@@ -144,6 +144,25 @@ export function GameCanvas({
     [currentWave, isHost]
   );
 
+  // Apply zombie damage immediately on local client
+  const handleDamageZombieLocally = useCallback(
+    (zombieId: string, damage: number, isHeadshot: boolean) => {
+      setZombies((prev) =>
+        prev.map((z) => {
+          if (z.id === zombieId) {
+            const newHp = Math.max(0, z.health - damage);
+            if (newHp <= 0 && z.health > 0) {
+              handleKillZombie(z.id, z.type);
+            }
+            return { ...z, health: newHp, state: 'CHASING' as const };
+          }
+          return z;
+        })
+      );
+    },
+    [handleKillZombie]
+  );
+
   // Incoming network sync
   useEffect(() => {
     if (!realtimeManager) return;
@@ -289,6 +308,7 @@ export function GameCanvas({
           onReloadEnd={() => setIsReloading(false)}
           onShoot={() => {}}
           onHitMarker={handleHitMarker}
+          onHitZombie={handleDamageZombieLocally}
           onWeaponChange={handleWeaponChange}
           onPerspectiveChange={setPerspective}
           onSpawnTracer={handleSpawnTracer}
