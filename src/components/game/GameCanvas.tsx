@@ -277,7 +277,16 @@ export function GameCanvas({
           else if (prev.hasPistol) setCurrentWeapon('PISTOL');
           else setCurrentWeapon('UNARMED');
         }
-        return { ...prev, iceWalls: remaining };
+        let updatedLoadout = prev.loadout;
+        if (prev.loadout) {
+          updatedLoadout = {
+            ...prev.loadout,
+            slot3: remaining > 0 ? (prev.loadout.slot3 ? { ...prev.loadout.slot3, count: remaining } : null) : null,
+          };
+        }
+        const next = { ...prev, iceWalls: remaining, loadout: updatedLoadout };
+        onInventoryChange?.(next);
+        return next;
       });
 
       const newWall: IceWallObject = {
@@ -296,7 +305,7 @@ export function GameCanvas({
       realtimeManager?.sendIceWallSpawn(newWall);
       sounds.playIceWallPlace();
     },
-    [inventory.iceWalls, localPlayerId, realtimeManager]
+    [inventory.iceWalls, localPlayerId, realtimeManager, onInventoryChange]
   );
 
   // Damage or shatter IceWall
@@ -321,7 +330,15 @@ export function GameCanvas({
     if (health >= 100) return;
 
     setInventory((prev) => {
-      const next = { ...prev, medkits: Math.max(0, prev.medkits - 1) };
+      const remaining = Math.max(0, prev.medkits - 1);
+      let updatedLoadout = prev.loadout;
+      if (prev.loadout) {
+        updatedLoadout = {
+          ...prev.loadout,
+          slot4: remaining > 0 ? (prev.loadout.slot4 ? { ...prev.loadout.slot4, count: remaining } : null) : null,
+        };
+      }
+      const next = { ...prev, medkits: remaining, loadout: updatedLoadout };
       onInventoryChange?.(next);
       return next;
     });

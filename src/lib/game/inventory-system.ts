@@ -29,8 +29,8 @@ export const CATALOG_ITEMS: Omit<StashItem, 'id'>[] = [
     name: '5.56mm Ammo Box (30 Rnds)',
     category: 'AMMO',
     count: 30,
-    maxStack: 180,
-    weight: 0.8,
+    maxStack: 999999,
+    weight: 0.01,
     slotType: 'AMMO',
     cost: 200,
     description: 'Standard 5.56x45mm military surplus rounds for M4A1.',
@@ -40,8 +40,8 @@ export const CATALOG_ITEMS: Omit<StashItem, 'id'>[] = [
     name: '.45 ACP Ammo Box (12 Rnds)',
     category: 'AMMO',
     count: 12,
-    maxStack: 96,
-    weight: 0.5,
+    maxStack: 999999,
+    weight: 0.01,
     slotType: 'AMMO',
     cost: 100,
     description: 'Heavy .45 ACP handgun rounds for .45 Thunder Revolver.',
@@ -51,22 +51,22 @@ export const CATALOG_ITEMS: Omit<StashItem, 'id'>[] = [
     name: 'IceWall Deployer',
     category: 'UTILITY',
     count: 1,
-    maxStack: 5,
-    weight: 1.5,
+    maxStack: 999999,
+    weight: 0.1,
     slotType: 3,
     cost: 500,
-    description: 'Deploys a 400HP reinforced ice barrier to absorb bullets.',
+    description: 'Deploys a 400HP reinforced ice barrier to absorb bullets. Unlimited stackable.',
   },
   {
     key: 'MEDKIT',
     name: 'Military Surgical Medkit',
     category: 'MEDICAL',
     count: 1,
-    maxStack: 5,
-    weight: 0.7,
+    maxStack: 999999,
+    weight: 0.1,
     slotType: 4,
     cost: 350,
-    description: 'Emergency stimulant auto-injector that restores +60 HP instantly.',
+    description: 'Emergency stimulant auto-injector that restores +60 HP instantly. Unlimited stackable.',
   },
 ];
 
@@ -77,6 +77,24 @@ export function createStashItem(itemKey: 'M4A1' | 'PISTOL' | 'AMMO_556' | 'AMMO_
     id: `item_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     count: customCount ?? base.count,
   };
+}
+
+// Auto-merge duplicate stackable items in stash
+export function consolidateStash(stash: StashItem[]): StashItem[] {
+  const merged: StashItem[] = [];
+  for (const item of stash) {
+    if (item.category === 'UTILITY' || item.category === 'MEDICAL' || item.category === 'AMMO') {
+      const existing = merged.find((m) => m.key === item.key);
+      if (existing) {
+        existing.count += (item.count || 1);
+      } else {
+        merged.push({ ...item });
+      }
+    } else {
+      merged.push({ ...item });
+    }
+  }
+  return merged;
 }
 
 export const INITIAL_LOADOUT: PlayerLoadout = {
@@ -108,8 +126,21 @@ export const INITIAL_INVENTORY: PlayerInventory = {
 export function syncInventoryFromLoadout(money: number, loadout: PlayerLoadout, stash: StashItem[]): PlayerInventory {
   const hasRifle = loadout.slot1?.key === 'M4A1';
   const hasPistol = loadout.slot2?.key === 'PISTOL';
-  const iceWalls = (loadout.slot3?.key === 'ICEWALL' ? (loadout.slot3.count || 1) : 0);
-  const medkits = (loadout.slot4?.key === 'MEDKIT' ? (loadout.slot4.count || 1) : 0);
+
+  // Unlimited stacking for Utility and Heal items across quickslots and backpack
+  let iceWalls = 0;
+  if (loadout.slot3?.key === 'ICEWALL') iceWalls += (loadout.slot3.count || 1);
+  if (loadout.slot5?.key === 'ICEWALL') iceWalls += (loadout.slot5.count || 1);
+  for (const b of loadout.backpack) {
+    if (b.key === 'ICEWALL') iceWalls += (b.count || 1);
+  }
+
+  let medkits = 0;
+  if (loadout.slot4?.key === 'MEDKIT') medkits += (loadout.slot4.count || 1);
+  if (loadout.slot5?.key === 'MEDKIT') medkits += (loadout.slot5.count || 1);
+  for (const b of loadout.backpack) {
+    if (b.key === 'MEDKIT') medkits += (b.count || 1);
+  }
 
   // Reserve ammo calculated from loadout fields + any ammo in backpack
   let rifleReserve = loadout.rifleAmmoReserve || 0;
@@ -135,7 +166,7 @@ export function syncInventoryFromLoadout(money: number, loadout: PlayerLoadout, 
     iceWalls,
     medkits,
     loadout,
-    stash,
+    stash: consolidateStash(stash),
   };
 }
 
