@@ -5,7 +5,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { RealtimeManager } from '@/lib/network/realtime-manager';
 import { sounds } from '@/lib/audio/sound-effects';
-import { ShootEvent, WeaponType, PlayerInventory, IceWallObject } from '@/types/game';
+import { ShootEvent, WeaponType, PlayerInventory, IceWallObject, PlayerNetState, KillFeedItem } from '@/types/game';
 import { WeaponModel } from './WeaponModel';
 import { SurvivorAvatar } from './SurvivorAvatar';
 import { BulletTracer, BloodPool } from './ImpactEffects';
@@ -34,6 +34,7 @@ interface FirstPersonPlayerProps {
   onSpawnTracer: (tracer: BulletTracer) => void;
   onSpawnBloodPool: (pool: BloodPool) => void;
   realtimeManager: RealtimeManager | null;
+  remotePlayers: Record<string, PlayerNetState>;
   zombiesRef: React.MutableRefObject<any[]>;
   iceWallsRef: React.MutableRefObject<IceWallObject[]>;
   onPlaceIceWall: (pos: [number, number, number], yaw: number) => void;
@@ -73,6 +74,7 @@ export function FirstPersonPlayer({
   onSpawnTracer,
   onSpawnBloodPool,
   realtimeManager,
+  remotePlayers,
   zombiesRef,
   iceWallsRef,
   onPlaceIceWall,
@@ -88,6 +90,10 @@ export function FirstPersonPlayer({
   setPreviewYaw,
 }: FirstPersonPlayerProps) {
   const { camera, gl } = useThree();
+
+  // Live remote players ref
+  const remotePlayersRef = useRef(remotePlayers);
+  remotePlayersRef.current = remotePlayers;
 
   // Position and physics
   const pos = useRef(new THREE.Vector3(0, 1.7, 5));
@@ -289,6 +295,31 @@ export function FirstPersonPlayer({
         isShootingRef.current = false;
       }, 100);
 
+      // Check melee against remote players (PvP punch)
+      for (const remotePlayer of Object.values(remotePlayersRef.current || {})) {
+        if (remotePlayer.id === playerId || remotePlayer.health <= 0) continue;
+        const [rX, rY, rZ] = remotePlayer.transform.position;
+        const dist = Math.hypot(rX - pos.current.x, rZ - pos.current.z);
+        if (dist <= 2.2) {
+          sounds.playZombieHit();
+          onHitMarker(false);
+          realtimeManager?.sendPlayerDamaged(remotePlayer.id, 30, playerName, 'FISTS', false);
+          if (remotePlayer.health <= 30) {
+            realtimeManager?.sendKillFeed({
+              id: `kf_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              killerName: playerName,
+              victimName: remotePlayer.name,
+              weapon: 'FISTS',
+              isHeadshot: false,
+              isPvP: true,
+              timestamp: Date.now(),
+            });
+          }
+          return;
+        }
+      }
+
+      // Check melee against zombies
       const zombies = zombiesRef.current || [];
       for (const zombie of zombies) {
         if (zombie.health <= 0) continue;
@@ -347,6 +378,9 @@ export function FirstPersonPlayer({
 
     let hitZombieId: string | undefined;
     let hitIceWallId: string | undefined;
+    let hitRemotePlayerId: string | undefined;
+    let hitRemotePlayerName: string | undefined;
+    let hitRemotePlayerHp = 0;
     let hitDamage = currentWeapon === 'PISTOL' ? 50 : 35;
     let isHeadshot = false;
     let hitPos = rayOrigin.clone().add(forwardDir.clone().multiplyScalar(75));
@@ -377,7 +411,39 @@ export function FirstPersonPlayer({
       }
     }
 
-    // B. Check collision against zombies if not blocked by closer IceWall
+    // B. Check collision against Remote Players (PvP full gunplay)
+    for (const remotePlayer of Object.values(remotePlayersRef.current || {})) {
+      if (remotePlayer.id === playerId || remotePlayer.health <= 0) continue;
+      const [pX, pY, pZ] = remotePlayer.transform.position;
+      const toPlayer = new THREE.Vector3(pX - rayOrigin.x, (pY - 0.9) - rayOrigin.y, pZ - rayOrigin.z);
+      const proj = toPlayer.dot(forwardDir);
+
+      if (proj > 0.4 && proj < closestDist) {
+        const rayPoint = rayOrigin.clone().add(forwardDir.clone().multiplyScalar(proj));
+        const horizDist = Math.hypot(rayPoint.x - pX, rayPoint.z - pZ);
+
+        if (horizDist < 0.65 && rayPoint.y >= pY - 1.9 && rayPoint.y <= pY + 0.6) {
+          closestDist = proj;
+          hitRemotePlayerId = remotePlayer.id;
+          hitRemotePlayerName = remotePlayer.name;
+          hitRemotePlayerHp = remotePlayer.health;
+          hitZombieId = undefined;
+          hitIceWallId = undefined;
+          hitPos = rayPoint;
+
+          // Headshot if hit upper skull region
+          if (rayPoint.y >= pY - 0.25) {
+            isHeadshot = true;
+            hitDamage = currentWeapon === 'PISTOL' ? 120 : 85;
+          } else {
+            isHeadshot = false;
+            hitDamage = currentWeapon === 'PISTOL' ? 50 : 35;
+          }
+        }
+      }
+    }
+
+    // C. Check collision against zombies if not blocked by closer IceWall or Player
     const zombies = zombiesRef.current || [];
     for (const zombie of zombies) {
       if (zombie.health <= 0) continue;
@@ -395,7 +461,8 @@ export function FirstPersonPlayer({
         if (horizDist < zRadius && rayPoint.y >= -0.2 && rayPoint.y <= 2.3) {
           closestDist = proj;
           hitZombieId = zombie.id;
-          hitIceWallId = undefined; // Zombie is closer than wall
+          hitRemotePlayerId = undefined;
+          hitIceWallId = undefined;
           hitPos = rayPoint;
 
           // Headshot if hit above shoulder line
@@ -426,6 +493,38 @@ export function FirstPersonPlayer({
       // IceWall absorbed the bullet!
       onDamageIceWall(hitIceWallId, hitDamage);
       sounds.playIceWallPlace();
+    } else if (hitRemotePlayerId && hitRemotePlayerName) {
+      // PvP Hit on Remote Survivor!
+      if (isHeadshot) {
+        sounds.playHeadshot();
+      } else {
+        sounds.playZombieHit();
+      }
+      onHitMarker(isHeadshot);
+
+      onSpawnBloodPool({
+        id: `blood_${Date.now()}_${Math.random()}`,
+        x: hitPos.x,
+        z: hitPos.z,
+        radius: isHeadshot ? 1.3 : 0.85,
+        rotation: Math.random() * Math.PI * 2,
+      });
+
+      const weaponLabel = currentWeapon === 'PISTOL' ? '.45 PISTOL' : 'M4A1';
+      realtimeManager?.sendPlayerDamaged(hitRemotePlayerId, hitDamage, playerName, weaponLabel, isHeadshot);
+
+      // Fatal PvP KillFeed
+      if (hitRemotePlayerHp <= hitDamage) {
+        realtimeManager?.sendKillFeed({
+          id: `kf_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          killerName: playerName,
+          victimName: hitRemotePlayerName,
+          weapon: weaponLabel,
+          isHeadshot,
+          isPvP: true,
+          timestamp: Date.now(),
+        });
+      }
     } else if (hitZombieId) {
       // 1. Immediately mutate zombiesRef so health is locked down directly
       const targetZombie = zombies.find((z) => z.id === hitZombieId);
@@ -466,7 +565,7 @@ export function FirstPersonPlayer({
       direction: [forwardDir.x, forwardDir.y, forwardDir.z],
       timestamp: Date.now(),
       hitZombieId,
-      damage: hitZombieId ? hitDamage : undefined,
+      damage: (hitZombieId || hitRemotePlayerId) ? hitDamage : undefined,
       isHeadshot,
     };
 
@@ -477,12 +576,12 @@ export function FirstPersonPlayer({
   useFrame((_, delta) => {
     if (health <= 0) return;
 
-    // Stamina & Sprinting System
+    // Stamina & Sprinting System (WarZ fast recovery)
     let isSprinting = moveKeys.current.sprint && stamina > 5;
     if (isSprinting) {
       onStaminaChange(Math.max(0, stamina - delta * 20));
     } else {
-      onStaminaChange(Math.min(100, stamina + delta * 12));
+      onStaminaChange(Math.min(100, stamina + delta * 18));
     }
 
     const speed = isSprinting ? 7.8 : isADS ? 2.8 : 4.6;

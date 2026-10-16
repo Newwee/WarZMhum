@@ -1,8 +1,8 @@
 'use client';
 
 import React from 'react';
-import { PlayerNetState, WaveState, PlayerInventory, WeaponType } from '@/types/game';
-import { Crosshair, Users, Skull, Activity, AlertCircle, Compass, Radio, DollarSign, ShoppingBag, Shield, PlusCircle } from 'lucide-react';
+import { PlayerNetState, PlayerInventory, WeaponType, KillFeedItem } from '@/types/game';
+import { Crosshair, Users, Skull, Activity, AlertCircle, Compass, Radio, DollarSign, Shield, PlusCircle } from 'lucide-react';
 
 interface GameHUDProps {
   health: number;
@@ -13,7 +13,7 @@ interface GameHUDProps {
   isReloading: boolean;
   score: number;
   kills: number;
-  waveState: WaveState;
+  killFeed?: KillFeedItem[];
   remotePlayers: Record<string, PlayerNetState>;
   hitMarker: 'body' | 'head' | null;
   isLocked: boolean;
@@ -25,8 +25,8 @@ interface GameHUDProps {
   isADS: boolean;
   perspective: 'FPS' | 'TPS';
   onSelectSlot: (weapon: WeaponType) => void;
-  onOpenShop: () => void;
-  isShopOpen: boolean;
+  onOpenShop?: () => void;
+  isShopOpen?: boolean;
 }
 
 export function GameHUD({
@@ -38,7 +38,7 @@ export function GameHUD({
   isReloading,
   score,
   kills,
-  waveState,
+  killFeed = [],
   remotePlayers,
   hitMarker,
   isLocked,
@@ -51,7 +51,7 @@ export function GameHUD({
   perspective,
   onSelectSlot,
   onOpenShop,
-  isShopOpen,
+  isShopOpen = false,
 }: GameHUDProps) {
   const hpPercent = Math.max(0, Math.min(100, (health / maxHealth) * 100));
 
@@ -67,11 +67,11 @@ export function GameHUD({
         <div className="fixed inset-0 bg-emerald-500/25 border-[10px] border-emerald-500/60 animate-pulse pointer-events-none transition-opacity duration-300" />
       )}
 
-      {/* TOP BAR: Clock, Squad Roster, Cash & Shop, Wave Status & Compass */}
+      {/* TOP BAR: Clock, Squad Roster, Cash, Zone Status, Compass & KillFeed */}
       <div className="flex justify-between items-start">
         {/* Top-Left: WarZ Clock & Squad Status */}
         <div className="flex flex-col gap-2">
-          {/* Digital Clock, Zone Info & Shop Button */}
+          {/* Digital Clock, Zone Info & Cash */}
           <div className="flex items-center gap-2">
             <div className="bg-black/75 backdrop-blur-sm border border-zinc-800/80 rounded-lg px-3 py-1.5 flex items-center gap-3">
               <span className="text-sm font-mono font-black text-zinc-200">19:27</span>
@@ -83,21 +83,13 @@ export function GameHUD({
               </span>
             </div>
 
-            {/* Survivor Cash Balance & Shop Button */}
+            {/* Survivor Cash Balance */}
             <div className="bg-emerald-950/85 backdrop-blur-sm border border-emerald-500/60 rounded-lg px-3 py-1.5 flex items-center gap-1.5 shadow-lg">
               <DollarSign className="w-4 h-4 text-emerald-400" />
               <span className="text-xs font-mono font-black text-emerald-400">
                 ${inventory.money.toLocaleString()}
               </span>
             </div>
-
-            <button
-              onClick={onOpenShop}
-              className="pointer-events-auto px-3 py-1.5 bg-red-600/90 hover:bg-red-500 text-white font-mono text-xs font-bold rounded-lg border border-red-500/50 shadow-lg flex items-center gap-1.5 transition-transform hover:scale-105 active:scale-95 cursor-pointer"
-            >
-              <ShoppingBag className="w-4 h-4" />
-              [B] SHOP
-            </button>
           </div>
 
           {/* Squad List */}
@@ -123,29 +115,49 @@ export function GameHUD({
           </div>
         </div>
 
-        {/* Top-Center: Wave Info */}
-        <div className="bg-black/80 backdrop-blur-md border border-zinc-800 px-6 py-2 rounded-xl flex items-center gap-5 shadow-2xl">
-          <div className="text-center">
-            <div className="text-[9px] font-mono tracking-widest text-zinc-500 uppercase">WAVE</div>
-            <div className="text-2xl font-black font-mono text-red-500">{waveState.wave}</div>
-          </div>
-          <div className="h-8 w-px bg-zinc-800" />
-          <div className="text-center">
-            <div className="text-[9px] font-mono tracking-widest text-zinc-500 uppercase">ZOMBIES LEFT</div>
-            <div className="text-2xl font-black font-mono text-amber-400">{waveState.zombiesRemaining}</div>
-          </div>
+        {/* Top-Center: Minimal Open Survival Zone Badge (No Wave Counter) */}
+        <div className="bg-black/70 backdrop-blur-md border border-zinc-800/80 px-4 py-1.5 rounded-full flex items-center gap-2 shadow-2xl">
+          <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+          <span className="text-[11px] font-mono font-bold text-zinc-300 tracking-wider uppercase">
+            OPEN SURVIVAL ZONE // WARZ PVP
+          </span>
         </div>
 
-        {/* Top-Right: WarZ Tactical Compass Dial */}
-        <div className="flex items-center gap-3">
-          <div className="bg-black/75 backdrop-blur-sm border border-zinc-800/80 rounded-lg p-2 text-right">
-            <div className="text-[10px] font-mono text-zinc-500">SCORE: <strong className="text-emerald-400 text-xs">{score}</strong></div>
-            <div className="text-[10px] font-mono text-zinc-500">KILLS: <strong className="text-red-400 text-xs">{kills}</strong></div>
+        {/* Top-Right: WarZ Tactical Compass Dial & Live KillFeed */}
+        <div className="flex flex-col items-end gap-2 max-w-xs">
+          <div className="flex items-center gap-3">
+            <div className="bg-black/75 backdrop-blur-sm border border-zinc-800/80 rounded-lg p-2 text-right">
+              <div className="text-[10px] font-mono text-zinc-500">SCORE: <strong className="text-emerald-400 text-xs">{score}</strong></div>
+              <div className="text-[10px] font-mono text-zinc-500">KILLS: <strong className="text-red-400 text-xs">{kills}</strong></div>
+            </div>
+
+            <div className="w-12 h-12 rounded-full border-2 border-zinc-700/80 bg-black/80 flex items-center justify-center relative shadow-lg">
+              <div className="w-0.5 h-4 bg-red-500 -top-1 absolute" />
+              <Compass className="w-6 h-6 text-zinc-400" />
+            </div>
           </div>
 
-          <div className="w-12 h-12 rounded-full border-2 border-zinc-700/80 bg-black/80 flex items-center justify-center relative shadow-lg">
-            <div className="w-0.5 h-4 bg-red-500 -top-1 absolute" />
-            <Compass className="w-6 h-6 text-zinc-400" />
+          {/* Real-time KillFeed List */}
+          <div className="flex flex-col gap-1.5 items-end pointer-events-none mt-1">
+            {killFeed.slice(-5).map((item) => (
+              <div
+                key={item.id}
+                className={`flex items-center gap-2 px-3 py-1 rounded-lg backdrop-blur-md font-mono text-xs border shadow-lg animate-in fade-in slide-in-from-right-3 duration-200 ${
+                  item.isPvP
+                    ? 'bg-red-950/85 border-red-600/70 text-red-200'
+                    : 'bg-black/80 border-zinc-800 text-zinc-300'
+                }`}
+              >
+                <span className="font-bold text-white max-w-[90px] truncate">{item.killerName}</span>
+                <div className="flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded bg-zinc-900/90 border border-zinc-700/60">
+                  {item.isHeadshot && <span className="text-red-400 font-black">🎯</span>}
+                  <span className="text-zinc-200 font-bold">{item.weapon}</span>
+                </div>
+                <span className={`max-w-[90px] truncate font-bold ${item.isPvP ? 'text-amber-300' : 'text-zinc-400'}`}>
+                  {item.victimName}
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       </div>
@@ -321,13 +333,14 @@ export function GameHUD({
         <div className="hidden sm:flex items-center gap-1.5 bg-black/85 backdrop-blur-md border border-zinc-800/80 px-3 py-2 rounded-xl pointer-events-auto">
           {/* Slot 1: Primary Rifle */}
           <button
-            onClick={() => inventory.hasRifle ? onSelectSlot('RIFLE') : onOpenShop()}
+            onClick={() => inventory.hasRifle && onSelectSlot('RIFLE')}
+            disabled={!inventory.hasRifle}
             className={`px-3 py-1.5 rounded-lg font-mono text-xs font-bold border transition-all cursor-pointer ${
               currentWeapon === 'RIFLE'
                 ? 'bg-red-950/90 border-red-500 text-white shadow-md'
                 : inventory.hasRifle
                 ? 'bg-zinc-900/80 border-zinc-700 text-zinc-300 hover:text-white'
-                : 'bg-zinc-950/60 border-zinc-900 text-zinc-600'
+                : 'bg-zinc-950/60 border-zinc-900 text-zinc-600 cursor-not-allowed'
             }`}
           >
             [1] M4A1 {inventory.hasRifle ? '' : '🔒'}
@@ -335,13 +348,14 @@ export function GameHUD({
 
           {/* Slot 2: Secondary Pistol */}
           <button
-            onClick={() => inventory.hasPistol ? onSelectSlot('PISTOL') : onOpenShop()}
+            onClick={() => inventory.hasPistol && onSelectSlot('PISTOL')}
+            disabled={!inventory.hasPistol}
             className={`px-3 py-1.5 rounded-lg font-mono text-xs font-bold border transition-all cursor-pointer ${
               currentWeapon === 'PISTOL'
                 ? 'bg-amber-950/90 border-amber-500 text-white shadow-md'
                 : inventory.hasPistol
                 ? 'bg-zinc-900/80 border-zinc-700 text-zinc-300 hover:text-white'
-                : 'bg-zinc-950/60 border-zinc-900 text-zinc-600'
+                : 'bg-zinc-950/60 border-zinc-900 text-zinc-600 cursor-not-allowed'
             }`}
           >
             [2] .45 PISTOL {inventory.hasPistol ? '' : '🔒'}
@@ -349,13 +363,14 @@ export function GameHUD({
 
           {/* Slot 3: IceWall */}
           <button
-            onClick={() => inventory.iceWalls > 0 ? onSelectSlot('ICEWALL') : onOpenShop()}
+            onClick={() => inventory.iceWalls > 0 && onSelectSlot('ICEWALL')}
+            disabled={inventory.iceWalls <= 0}
             className={`px-3 py-1.5 rounded-lg font-mono text-xs font-bold border transition-all cursor-pointer ${
               currentWeapon === 'ICEWALL'
                 ? 'bg-cyan-950/90 border-cyan-400 text-cyan-200 shadow-md shadow-cyan-950'
                 : inventory.iceWalls > 0
                 ? 'bg-zinc-900/80 border-cyan-800/50 text-cyan-300 hover:text-white'
-                : 'bg-zinc-950/60 border-zinc-900 text-zinc-600'
+                : 'bg-zinc-950/60 border-zinc-900 text-zinc-600 cursor-not-allowed'
             }`}
           >
             [3] ICE WALL ({inventory.iceWalls})
@@ -363,13 +378,14 @@ export function GameHUD({
 
           {/* Slot 4: Medkit */}
           <button
-            onClick={() => inventory.medkits > 0 ? onSelectSlot('MEDKIT') : onOpenShop()}
+            onClick={() => inventory.medkits > 0 && onSelectSlot('MEDKIT')}
+            disabled={inventory.medkits <= 0}
             className={`px-3 py-1.5 rounded-lg font-mono text-xs font-bold border transition-all cursor-pointer ${
               currentWeapon === 'MEDKIT'
                 ? 'bg-emerald-950/90 border-emerald-400 text-emerald-200 shadow-md shadow-emerald-950'
                 : inventory.medkits > 0
                 ? 'bg-zinc-900/80 border-emerald-800/50 text-emerald-300 hover:text-white'
-                : 'bg-zinc-950/60 border-zinc-900 text-zinc-600'
+                : 'bg-zinc-950/60 border-zinc-900 text-zinc-600 cursor-not-allowed'
             }`}
           >
             [4] MEDKIT ({inventory.medkits})
@@ -399,7 +415,7 @@ export function GameHUD({
                 FISTS
               </div>
               <div className="text-[10px] font-mono text-amber-400 mt-1">
-                [L-CLICK] PUNCH &bull; PRESS [B] TO BUY WEAPONS
+                [L-CLICK] MELEE PUNCH
               </div>
             </>
           )}

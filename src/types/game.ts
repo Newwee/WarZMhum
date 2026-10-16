@@ -115,3 +115,13 @@ export interface IceWallObject {
   createdAt: number;
   expiresAt: number;
 }
+
+export interface KillFeedItem {
+  id: string;
+  killerName: string;
+  victimName: string;
+  weapon: string;
+  isHeadshot: boolean;
+  isPvP: boolean;
+  timestamp: number;
+}

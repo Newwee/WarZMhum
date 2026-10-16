@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { RoomMember } from '@/types/game';
-import { Users, Copy, Check, Play, LogOut, Crown, ShieldCheck, ShieldAlert, Sparkles } from 'lucide-react';
+import { RoomMember, PlayerInventory } from '@/types/game';
+import { Users, Copy, Check, Play, LogOut, Crown, ShieldCheck, ShieldAlert, Sparkles, ShoppingBag } from 'lucide-react';
+import { ShopModal } from '@/components/game/ShopModal';
 
 interface RoomLobbyProps {
   roomCode: string;
@@ -12,6 +13,8 @@ interface RoomLobbyProps {
   onToggleReady: (ready: boolean) => void;
   onStartGame: () => void;
   onLeaveRoom: () => void;
+  inventory: PlayerInventory;
+  onBuyItem: (itemKey: 'RIFLE' | 'RIFLE_AMMO' | 'PISTOL' | 'PISTOL_AMMO' | 'ICEWALL' | 'MEDKIT', cost: number) => void;
 }
 
 export function RoomLobby({
@@ -22,9 +25,12 @@ export function RoomLobby({
   onToggleReady,
   onStartGame,
   onLeaveRoom,
+  inventory,
+  onBuyItem,
 }: RoomLobbyProps) {
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [isShopOpen, setIsShopOpen] = useState(false);
 
   const currentUser = members.find((m) => m.profile_id === currentUserId);
   const isReady = currentUser?.is_ready || false;
@@ -74,12 +80,21 @@ export function RoomLobby({
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Armory & Loadout Shop */}
+          <button
+            onClick={() => setIsShopOpen(true)}
+            className="px-4 py-2 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-black font-mono font-bold text-xs rounded-xl flex items-center gap-2 transition-all shadow-lg cursor-pointer"
+          >
+            <ShoppingBag className="w-3.5 h-3.5" />
+            <span>ARMORY (${inventory.money.toLocaleString()})</span>
+          </button>
+
           <button
             onClick={copyInviteLink}
             className="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 rounded-xl font-mono text-xs text-zinc-300 flex items-center gap-2 transition-colors"
           >
             {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-            <span>COPY INVITE LINK</span>
+            <span>COPY LINK</span>
           </button>
 
           <button
@@ -201,6 +216,14 @@ export function RoomLobby({
           </div>
         </div>
       </main>
+
+      {/* Armory & Loadout Shop Modal */}
+      <ShopModal
+        isOpen={isShopOpen}
+        onClose={() => setIsShopOpen(false)}
+        inventory={inventory}
+        onBuyItem={onBuyItem}
+      />
 
       {/* Footer */}
       <footer className="relative z-10 text-center text-xs font-mono text-zinc-600 py-2">

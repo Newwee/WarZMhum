@@ -1,5 +1,5 @@
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
-import { Room, RoomMember, PlayerNetState, ZombieNetState, ShootEvent, WaveState, MatchSummary, IceWallObject } from '@/types/game';
+import { Room, RoomMember, PlayerNetState, ZombieNetState, ShootEvent, WaveState, MatchSummary, IceWallObject, KillFeedItem } from '@/types/game';
 import { RealtimeChannel } from '@supabase/supabase-js';
 
 export interface NetworkCallbacks {
@@ -9,11 +9,12 @@ export interface NetworkCallbacks {
   onRemotePlayerShoot?: (event: ShootEvent) => void;
   onZombieSync?: (zombies: ZombieNetState[]) => void;
   onZombieDamaged?: (data: { zombieId: string; damage: number; attackerId: string }) => void;
-  onPlayerDamaged?: (data: { playerId: string; damage: number }) => void;
+  onPlayerDamaged?: (data: { playerId: string; damage: number; attackerName?: string; weapon?: string; isHeadshot?: boolean }) => void;
   onWaveChange?: (wave: WaveState) => void;
   onGameOver?: (summary: MatchSummary) => void;
   onIceWallSpawn?: (wall: IceWallObject) => void;
   onIceWallDamage?: (data: { id: string; damage: number }) => void;
+  onKillFeed?: (item: KillFeedItem) => void;
 }
 
 export class RealtimeManager {
@@ -104,6 +105,9 @@ export class RealtimeManager {
         })
         .on('broadcast', { event: 'icewall_damage' }, ({ payload }) => {
           this.callbacks.onIceWallDamage?.(payload);
+        })
+        .on('broadcast', { event: 'kill_feed' }, ({ payload }) => {
+          this.callbacks.onKillFeed?.(payload);
         });
 
       // Subscribe and track presence
@@ -139,6 +143,7 @@ export class RealtimeManager {
           if (type === 'game_over') this.callbacks.onGameOver?.(payload);
           if (type === 'icewall_spawn') this.callbacks.onIceWallSpawn?.(payload);
           if (type === 'icewall_damage') this.callbacks.onIceWallDamage?.(payload);
+          if (type === 'kill_feed') this.callbacks.onKillFeed?.(payload);
         };
       }
       return true;
@@ -213,8 +218,8 @@ export class RealtimeManager {
     }
   }
 
-  public sendPlayerDamaged(playerId: string, damage: number) {
-    const payload = { playerId, damage };
+  public sendPlayerDamaged(playerId: string, damage: number, attackerName?: string, weapon?: string, isHeadshot?: boolean) {
+    const payload = { playerId, damage, attackerName, weapon, isHeadshot };
     if (this.channel) {
       this.channel.send({
         type: 'broadcast',
@@ -225,6 +230,21 @@ export class RealtimeManager {
       this.localBroadcast.postMessage({
         type: 'player_damage',
         payload,
+      });
+    }
+  }
+
+  public sendKillFeed(item: KillFeedItem) {
+    if (this.channel) {
+      this.channel.send({
+        type: 'broadcast',
+        event: 'kill_feed',
+        payload: item,
+      });
+    } else if (this.localBroadcast) {
+      this.localBroadcast.postMessage({
+        type: 'kill_feed',
+        payload: item,
       });
     }
   }

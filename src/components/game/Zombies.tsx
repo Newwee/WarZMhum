@@ -20,9 +20,6 @@ interface ZombiesProps {
   onKillZombie: (zombieId: string, zombieType: ZombieType) => void;
   remotePlayers: Record<string, PlayerNetState>;
   realtimeManager: RealtimeManager | null;
-  currentWave: number;
-  waveState: WaveState;
-  setWaveState: React.Dispatch<React.SetStateAction<WaveState>>;
   iceWallsRef?: React.MutableRefObject<IceWallObject[]>;
   onDamageIceWall?: (id: string, damage: number) => void;
 }
@@ -39,9 +36,6 @@ export function Zombies({
   onKillZombie,
   remotePlayers,
   realtimeManager,
-  currentWave,
-  waveState,
-  setWaveState,
   iceWallsRef,
   onDamageIceWall,
 }: ZombiesProps) {
@@ -63,18 +57,17 @@ export function Zombies({
     }
   };
 
-  // Host spawns wave when needed
+  // Continuous Open-World Zombie Population (Constant 25 zombies roaming around)
   useEffect(() => {
     if (!isHost) return;
 
-    if (zombies.length === 0 && waveState.isWaveActive) {
-      const count = Math.min(30, 4 + currentWave * 4);
-      const newZombies: ZombieNetState[] = [];
+    if (zombiesRef.current.length === 0) {
+      const initialCount = 25;
+      const initialZombies: ZombieNetState[] = [];
 
-      for (let i = 0; i < count; i++) {
-        // Spawn along perimeter (-36 to 36)
+      for (let i = 0; i < initialCount; i++) {
         const angle = Math.random() * Math.PI * 2;
-        const radius = 30 + Math.random() * 8;
+        const radius = 16 + Math.random() * 28;
         const x = Math.cos(angle) * radius;
         const z = Math.sin(angle) * radius;
 
@@ -83,38 +76,32 @@ export function Zombies({
         let speed = 2.4;
 
         const rand = Math.random();
-        if (currentWave >= 2 && rand > 0.75) {
+        if (rand > 0.72) {
           type = 'RUNNER';
           health = 40;
-          speed = 4.6;
-        } else if (currentWave >= 3 && rand < 0.2) {
+          speed = 4.4;
+        } else if (rand < 0.15) {
           type = 'TANK';
           health = 220;
           speed = 1.6;
         }
 
-        newZombies.push({
-          id: `zombie_${currentWave}_${i}_${Date.now()}`,
+        initialZombies.push({
+          id: `zombie_${i}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
           type,
           position: [x, 0, z],
           rotation: Math.random() * Math.PI * 2,
           health,
           maxHealth: health,
           speed,
-          state: 'IDLE', // Initially Idle/Wandering until player comes in range
+          state: 'IDLE',
         });
       }
 
-      zombiesRef.current = newZombies;
-      setZombies(newZombies);
-      setWaveState((prev) => ({
-        ...prev,
-        zombiesRemaining: count,
-        totalZombiesInWave: count,
-      }));
-      sounds.playWaveAlarm();
+      zombiesRef.current = initialZombies;
+      setZombies(initialZombies);
     }
-  }, [isHost, currentWave, waveState.isWaveActive, zombiesRef, setZombies, setWaveState]);
+  }, [isHost, zombiesRef, setZombies]);
 
   // Host Authoritative AI Update Loop
   useFrame((_, delta) => {

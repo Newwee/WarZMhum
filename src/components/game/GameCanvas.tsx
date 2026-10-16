@@ -12,7 +12,7 @@ import { ImpactEffects, BloodPool, BulletTracer } from './ImpactEffects';
 import { IceWallManager } from './IceWall';
 import { ShopModal } from './ShopModal';
 import { RealtimeManager } from '@/lib/network/realtime-manager';
-import { PlayerNetState, ZombieNetState, ShootEvent, WaveState, MatchSummary, ZombieType, PlayerInventory, WeaponType, IceWallObject } from '@/types/game';
+import { PlayerNetState, ZombieNetState, ShootEvent, MatchSummary, ZombieType, PlayerInventory, WeaponType, IceWallObject, KillFeedItem } from '@/types/game';
 import { sounds } from '@/lib/audio/sound-effects';
 
 interface GameCanvasProps {
@@ -22,6 +22,8 @@ interface GameCanvasProps {
   isHost: boolean;
   realtimeManager: RealtimeManager | null;
   onExitGame: () => void;
+  initialInventory: PlayerInventory;
+  onInventoryChange?: (inv: PlayerInventory) => void;
 }
 
 export function GameCanvas({
@@ -31,29 +33,30 @@ export function GameCanvas({
   isHost,
   realtimeManager,
   onExitGame,
+  initialInventory,
+  onInventoryChange,
 }: GameCanvasProps) {
-  // Player vitals & inventory state (Starts with $10,000 and unarmed)
+  // Player vitals & inventory state (Initialized from Lobby loadout)
   const [health, setHealth] = useState(100);
   const [stamina, setStamina] = useState(100);
-  const [currentWeapon, setCurrentWeapon] = useState<WeaponType>('UNARMED');
-  const [ammo, setAmmo] = useState(0);
-  const [maxAmmo, setMaxAmmo] = useState(0);
+  const [inventory, setInventory] = useState<PlayerInventory>(initialInventory);
+  const [killFeed, setKillFeed] = useState<KillFeedItem[]>([]);
+
+  // Choose starting weapon based on purchased Lobby loadout
+  const [currentWeapon, setCurrentWeapon] = useState<WeaponType>(() => {
+    if (initialInventory?.hasRifle) return 'RIFLE';
+    if (initialInventory?.hasPistol) return 'PISTOL';
+    if (initialInventory && initialInventory.iceWalls > 0) return 'ICEWALL';
+    if (initialInventory && initialInventory.medkits > 0) return 'MEDKIT';
+    return 'UNARMED';
+  });
+  const [ammo, setAmmo] = useState(() => (initialInventory?.hasRifle ? 30 : initialInventory?.hasPistol ? 6 : 0));
+  const [maxAmmo, setMaxAmmo] = useState(() => (initialInventory?.hasRifle ? 30 : initialInventory?.hasPistol ? 6 : 0));
   const [isReloading, setIsReloading] = useState(false);
   const [score, setScore] = useState(0);
   const [kills, setKills] = useState(0);
 
-  // Survivor Inventory: Everyone enters empty-handed with $10,000 starting cash
-  const [inventory, setInventory] = useState<PlayerInventory>({
-    money: 10000,
-    hasRifle: false,
-    rifleAmmo: 0,
-    hasPistol: false,
-    pistolAmmo: 0,
-    iceWalls: 0,
-    medkits: 0,
-  });
-
-  // Shop & Visual FX
+  // Visual FX
   const [isShopOpen, setIsShopOpen] = useState(false);
   const [damageVignette, setDamageVignette] = useState(false);
   const [healVignette, setHealVignette] = useState(false);
@@ -80,15 +83,7 @@ export function GameCanvas({
   const zombiesRef = useRef<ZombieNetState[]>([]);
   const localPlayerPosRef = useRef<[number, number, number]>([0, 1.7, 5]);
 
-  // Waves & Match summary
-  const [currentWave, setCurrentWave] = useState(1);
-  const [waveState, setWaveState] = useState<WaveState>({
-    wave: 1,
-    zombiesRemaining: 6,
-    totalZombiesInWave: 6,
-    isWaveActive: true,
-  });
-
+  // Match & game over state
   const [gameOver, setGameOver] = useState(false);
   const [matchSummary, setMatchSummary] = useState<MatchSummary | null>(null);
   const gameStartTime = useRef(Date.now());
@@ -130,10 +125,21 @@ export function GameCanvas({
 
       if (nextHp <= 0 && prev > 0) {
         sounds.playPlayerHurt();
+        const deathItem: KillFeedItem = {
+          id: `kf_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          killerName: 'ZOMBIE',
+          victimName: localPlayerName,
+          weapon: 'CLAWS',
+          isHeadshot: false,
+          isPvP: false,
+          timestamp: Date.now(),
+        };
+        setKillFeed((feed) => [...feed.slice(-6), deathItem]);
+        realtimeManager?.sendKillFeed(deathItem);
       }
       return nextHp;
     });
-  }, []);
+  }, [localPlayerName, realtimeManager]);
 
   // Hit Marker trigger
   const handleHitMarker = useCallback((isHeadshot: boolean) => {
@@ -141,42 +147,42 @@ export function GameCanvas({
     setTimeout(() => setHitMarker(null), 140);
   }, []);
 
-  // Kill zombie handler with Bounty Cash Rewards
+  // Kill zombie handler with Bounty Cash Rewards and KillFeed dispatch
   const handleKillZombie = useCallback(
-    (zombieId: string, zombieType: ZombieType) => {
+    (zombieId: string, zombieType: ZombieType, isHeadshot: boolean = false) => {
       const pts = zombieType === 'TANK' ? 350 : zombieType === 'RUNNER' ? 180 : 100;
       const cashReward = zombieType === 'TANK' ? 600 : zombieType === 'RUNNER' ? 250 : 150;
       setScore((s) => s + pts);
       setKills((k) => k + 1);
 
       // Reward player with Bounty Cash
-      setInventory((prev) => ({
-        ...prev,
-        money: prev.money + cashReward,
-      }));
+      setInventory((prev) => {
+        const next = {
+          ...prev,
+          money: prev.money + cashReward,
+        };
+        onInventoryChange?.(next);
+        return next;
+      });
 
       // 1. Permanently prune dead zombie from Authoritative Ref
       zombiesRef.current = zombiesRef.current.filter((z) => z.id !== zombieId);
       setZombies([...zombiesRef.current]);
 
-      // 2. Wave Progression Check
-      setWaveState((w) => {
-        const remaining = zombiesRef.current.length;
-        if (remaining === 0 && isHost) {
-          setTimeout(() => {
-            setCurrentWave((cw) => cw + 1);
-            setWaveState({
-              wave: currentWave + 1,
-              zombiesRemaining: 6 + (currentWave + 1) * 4,
-              totalZombiesInWave: 6 + (currentWave + 1) * 4,
-              isWaveActive: true,
-            });
-          }, 3500);
-        }
-        return { ...w, zombiesRemaining: remaining };
-      });
+      // 2. Dispatch KillFeed notification
+      const killItem: KillFeedItem = {
+        id: `kf_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        killerName: localPlayerName,
+        victimName: `${zombieType} WALKER`,
+        weapon: currentWeapon === 'RIFLE' ? 'M4A1' : currentWeapon === 'PISTOL' ? '.45 PISTOL' : 'FISTS',
+        isHeadshot,
+        isPvP: false,
+        timestamp: Date.now(),
+      };
+      setKillFeed((feed) => [...feed.slice(-6), killItem]);
+      realtimeManager?.sendKillFeed(killItem);
     },
-    [currentWave, isHost]
+    [localPlayerName, currentWeapon, realtimeManager, onInventoryChange]
   );
 
   // Apply zombie damage immediately on local client
@@ -187,7 +193,7 @@ export function GameCanvas({
         target.health = Math.max(0, target.health - damage);
         target.state = 'CHASING';
         if (target.health <= 0) {
-          handleKillZombie(target.id, target.type);
+          handleKillZombie(target.id, target.type, isHeadshot);
           return;
         }
       }
@@ -283,19 +289,20 @@ export function GameCanvas({
     [realtimeManager]
   );
 
-  // Use Medkit to recover health
+  // Use Medkit to recover health (War Z rapid +60 HP burst)
   const handleUseMedkit = useCallback(() => {
     if (inventory.medkits <= 0) return;
     if (health >= 100) return;
 
-    setInventory((prev) => ({
-      ...prev,
-      medkits: Math.max(0, prev.medkits - 1),
-    }));
+    setInventory((prev) => {
+      const next = { ...prev, medkits: Math.max(0, prev.medkits - 1) };
+      onInventoryChange?.(next);
+      return next;
+    });
 
-    setHealth((prev) => Math.min(100, prev + 50));
+    setHealth((prev) => Math.min(100, prev + 60));
     setHealVignette(true);
-    setTimeout(() => setHealVignette(false), 450);
+    setTimeout(() => setHealVignette(false), 300);
     sounds.playMedkitHeal();
 
     if (currentWeapon === 'MEDKIT' && inventory.medkits <= 1) {
@@ -303,7 +310,7 @@ export function GameCanvas({
       else if (inventory.hasPistol) setCurrentWeapon('PISTOL');
       else setCurrentWeapon('UNARMED');
     }
-  }, [inventory.medkits, inventory.hasRifle, inventory.hasPistol, health, currentWeapon]);
+  }, [inventory.medkits, inventory.hasRifle, inventory.hasPistol, health, currentWeapon, onInventoryChange]);
 
   // Open / Close Shop
   const handleToggleShop = useCallback(() => {
@@ -350,11 +357,11 @@ export function GameCanvas({
       if (!isHost) {
         setZombies(syncedZombies);
         zombiesRef.current = syncedZombies;
-        setWaveState((prev) => ({
-          ...prev,
-          zombiesRemaining: syncedZombies.filter((z) => z.health > 0).length,
-        }));
       }
+    };
+
+    (realtimeManager as any).callbacks.onKillFeed = (item: KillFeedItem) => {
+      setKillFeed((prev) => [...prev.slice(-6), item]);
     };
 
     (realtimeManager as any).callbacks.onZombieDamaged = ({ zombieId, damage, attackerId }: any) => {
@@ -418,7 +425,7 @@ export function GameCanvas({
     if (isLocalDead && areAllRemoteDead) {
       const survivalTime = Math.floor((Date.now() - gameStartTime.current) / 1000);
       const summary: MatchSummary = {
-        finalWave: currentWave,
+        finalWave: 1,
         totalZombiesKilled: kills,
         survivalSeconds: survivalTime,
         completed: false,
@@ -451,7 +458,7 @@ export function GameCanvas({
       realtimeManager?.sendGameOver(summary);
       if (document.exitPointerLock) document.exitPointerLock();
     }
-  }, [health, remotePlayers, gameOver, currentWave, kills, score, localPlayerId, localPlayerName, realtimeManager]);
+  }, [health, remotePlayers, gameOver, kills, score, localPlayerId, localPlayerName, realtimeManager]);
 
   const handleRestart = () => {
     setHealth(100);
@@ -459,7 +466,6 @@ export function GameCanvas({
     setAmmo(maxAmmo);
     setScore(0);
     setKills(0);
-    setCurrentWave(1);
     setZombies([]);
     setBloodPools([]);
     setTracers([]);
@@ -504,6 +510,7 @@ export function GameCanvas({
           onSpawnTracer={handleSpawnTracer}
           onSpawnBloodPool={handleSpawnBloodPool}
           realtimeManager={realtimeManager}
+          remotePlayers={remotePlayers}
           zombiesRef={zombiesRef}
           iceWallsRef={iceWallsRef}
           onPlaceIceWall={handlePlaceIceWall}
@@ -535,9 +542,6 @@ export function GameCanvas({
           onKillZombie={handleKillZombie}
           remotePlayers={remotePlayers}
           realtimeManager={realtimeManager}
-          currentWave={currentWave}
-          waveState={waveState}
-          setWaveState={setWaveState}
           iceWallsRef={iceWallsRef}
           onDamageIceWall={handleDamageIceWall}
         />
@@ -565,7 +569,7 @@ export function GameCanvas({
           isReloading={isReloading}
           score={score}
           kills={kills}
-          waveState={waveState}
+          killFeed={killFeed}
           remotePlayers={remotePlayers}
           hitMarker={hitMarker}
           isLocked={isLocked}
