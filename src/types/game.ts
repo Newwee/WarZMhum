@@ -94,15 +94,55 @@ export interface MatchSummary {
 }
 
 export type WeaponType = 'UNARMED' | 'RIFLE' | 'PISTOL' | 'ICEWALL' | 'MEDKIT';
+export type ItemCategory = 'ALL' | 'WEAPONS' | 'AMMO' | 'MEDICAL' | 'UTILITY';
+
+export interface StashItem {
+  id: string;
+  key: 'M4A1' | 'PISTOL' | 'AMMO_556' | 'AMMO_45' | 'ICEWALL' | 'MEDKIT';
+  name: string;
+  category: ItemCategory;
+  count: number;
+  maxStack: number;
+  weight: number;
+  slotType: 1 | 2 | 3 | 4 | 5 | 'AMMO';
+  cost: number;
+  description: string;
+}
+
+export interface PlayerLoadout {
+  slot1: StashItem | null; // Primary Weapon (M4A1)
+  slot2: StashItem | null; // Secondary Weapon (.45 Pistol)
+  slot3: StashItem | null; // Utility (IceWall)
+  slot4: StashItem | null; // Heal (Medkit)
+  slot5: StashItem | null; // Misc / Other
+  rifleAmmoReserve: number; // 5.56mm reserve rounds brought into raid
+  pistolAmmoReserve: number; // .45 ACP reserve rounds brought into raid
+  backpack: StashItem[]; // Extra items in military ruck
+}
+
+export interface GroundLootCrate {
+  id: string;
+  ownerId: string;
+  ownerName: string;
+  position: [number, number, number];
+  loadout: PlayerLoadout;
+  money: number;
+  looted: boolean;
+  timestamp: number;
+}
 
 export interface PlayerInventory {
   money: number;
   hasRifle: boolean;
   rifleAmmo: number;
+  rifleAmmoReserve: number;
   hasPistol: boolean;
   pistolAmmo: number;
+  pistolAmmoReserve: number;
   iceWalls: number;
   medkits: number;
+  loadout?: PlayerLoadout;
+  stash?: StashItem[];
 }
 
 export interface IceWallObject {

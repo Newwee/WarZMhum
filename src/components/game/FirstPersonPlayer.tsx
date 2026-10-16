@@ -40,7 +40,9 @@ interface FirstPersonPlayerProps {
   onPlaceIceWall: (pos: [number, number, number], yaw: number) => void;
   onDamageIceWall: (id: string, damage: number) => void;
   onUseMedkit: () => void;
-  onToggleShop: () => void;
+  onToggleInventory?: () => void;
+  onConsumeReserveAmmo?: (weapon: 'RIFLE' | 'PISTOL', amount: number) => void;
+  onHoldEChange?: (isHolding: boolean) => void;
   isLocked: boolean;
   setIsLocked: (locked: boolean) => void;
   isADS: boolean;
@@ -80,7 +82,9 @@ export function FirstPersonPlayer({
   onPlaceIceWall,
   onDamageIceWall,
   onUseMedkit,
-  onToggleShop,
+  onToggleInventory,
+  onConsumeReserveAmmo,
+  onHoldEChange,
   isLocked,
   setIsLocked,
   isADS,
@@ -182,9 +186,15 @@ export function FirstPersonPlayer({
         sounds.playSwitchWeapon();
       }
 
-      // [B] Open / Close Shop & Armory
-      if (e.code === 'KeyB') {
-        onToggleShop();
+      // [Tab] or [I] In-Game Inventory / Backpack
+      if (e.code === 'Tab' || e.code === 'KeyI') {
+        e.preventDefault();
+        onToggleInventory?.();
+      }
+
+      // [E] Hold to loot
+      if (e.code === 'KeyE') {
+        onHoldEChange?.(true);
       }
 
       // [V] Switch Perspective (FPS / TPS)
@@ -199,6 +209,7 @@ export function FirstPersonPlayer({
       if (e.code === 'KeyA') moveKeys.current.left = false;
       if (e.code === 'KeyD') moveKeys.current.right = false;
       if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') moveKeys.current.sprint = false;
+      if (e.code === 'KeyE') onHoldEChange?.(false);
     };
 
     const onMouseDown = (e: MouseEvent) => {
@@ -252,16 +263,34 @@ export function FirstPersonPlayer({
     perspective,
     inventory,
     onUseMedkit,
-    onToggleShop,
+    onToggleInventory,
+    onHoldEChange,
     onWeaponChange,
     onPerspectiveChange,
   ]);
 
   const handleReload = () => {
+    if (isReloading) return;
+    const isRifle = currentWeapon === 'RIFLE';
+    const isPistol = currentWeapon === 'PISTOL';
+    if (!isRifle && !isPistol) return;
+
+    const needed = maxAmmo - ammo;
+    if (needed <= 0) return;
+
+    const reserve = isRifle ? (inventory.rifleAmmoReserve || 0) : (inventory.pistolAmmoReserve || 0);
+    if (reserve <= 0) {
+      sounds.playEmptyClick();
+      return;
+    }
+
+    const toLoad = Math.min(needed, reserve);
+
     onReloadStart();
     sounds.playReload();
     setTimeout(() => {
-      onAmmoChange(maxAmmo);
+      onConsumeReserveAmmo?.(isRifle ? 'RIFLE' : 'PISTOL', toLoad);
+      onAmmoChange(ammo + toLoad);
       onReloadEnd();
     }, 1300);
   };
@@ -342,8 +371,13 @@ export function FirstPersonPlayer({
 
     // 4. FIREARMS: RIFLE or PISTOL
     if (ammo <= 0) {
-      sounds.playReload();
-      handleReload();
+      const isRifle = currentWeapon === 'RIFLE';
+      const reserve = isRifle ? (inventory.rifleAmmoReserve || 0) : (inventory.pistolAmmoReserve || 0);
+      if (reserve > 0 && !isReloading) {
+        handleReload();
+      } else {
+        sounds.playEmptyClick();
+      }
       return;
     }
 
@@ -612,8 +646,8 @@ export function FirstPersonPlayer({
       }
     }
 
-    pos.current.x = Math.max(-55, Math.min(55, pos.current.x));
-    pos.current.z = Math.max(-55, Math.min(55, pos.current.z));
+    pos.current.x = Math.max(-145, Math.min(145, pos.current.x));
+    pos.current.z = Math.max(-145, Math.min(145, pos.current.z));
 
     // Head bobbing
     const isMoving = inputDir.lengthSq() > 0 && isGrounded.current;

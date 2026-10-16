@@ -10,10 +10,25 @@ import { GameHUD } from './GameHUD';
 import { GameOverModal } from './GameOverModal';
 import { ImpactEffects, BloodPool, BulletTracer } from './ImpactEffects';
 import { IceWallManager } from './IceWall';
-import { ShopModal } from './ShopModal';
+import { WarZInventoryModal } from './WarZInventoryModal';
+import { GroundLoot } from './GroundLoot';
 import { RealtimeManager } from '@/lib/network/realtime-manager';
-import { PlayerNetState, ZombieNetState, ShootEvent, MatchSummary, ZombieType, PlayerInventory, WeaponType, IceWallObject, KillFeedItem } from '@/types/game';
+import {
+  PlayerNetState,
+  ZombieNetState,
+  ShootEvent,
+  MatchSummary,
+  ZombieType,
+  PlayerInventory,
+  WeaponType,
+  IceWallObject,
+  KillFeedItem,
+  GroundLootCrate,
+  StashItem,
+  PlayerLoadout,
+} from '@/types/game';
 import { sounds } from '@/lib/audio/sound-effects';
+import { createStashItem, savePlayerSavedData } from '@/lib/game/inventory-system';
 
 interface GameCanvasProps {
   roomCode: string;
@@ -56,8 +71,19 @@ export function GameCanvas({
   const [score, setScore] = useState(0);
   const [kills, setKills] = useState(0);
 
-  // Visual FX
-  const [isShopOpen, setIsShopOpen] = useState(false);
+  // WarZ In-Game Backpack / Inventory
+  const [isInventoryOpen, setIsInventoryOpen] = useState(false);
+
+  // Ground Loot & [E] hold to loot
+  const [groundLootCrates, setGroundLootCrates] = useState<GroundLootCrate[]>([]);
+  const [nearestCrateId, setNearestCrateId] = useState<string | null>(null);
+  const [isHoldingE, setIsHoldingE] = useState(false);
+  const [lootProgress, setLootProgress] = useState(0);
+  const [lootPrompt, setLootPrompt] = useState<{ name: string; progress: number } | null>(null);
+
+  // 10-Second Extraction Zone Countdown
+  const [extractionTimer, setExtractionTimer] = useState<number | null>(null);
+  const hasDroppedLootRef = useRef(false);
   const [damageVignette, setDamageVignette] = useState(false);
   const [healVignette, setHealVignette] = useState(false);
   const [hitMarker, setHitMarker] = useState<'body' | 'head' | null>(null);
@@ -312,9 +338,9 @@ export function GameCanvas({
     }
   }, [inventory.medkits, inventory.hasRifle, inventory.hasPistol, health, currentWeapon, onInventoryChange]);
 
-  // Open / Close Shop
-  const handleToggleShop = useCallback(() => {
-    setIsShopOpen((prev) => {
+  // Open / Close In-Game Backpack (Strictly no buying allowed in-game)
+  const handleToggleInventory = useCallback(() => {
+    setIsInventoryOpen((prev) => {
       const next = !prev;
       if (next && document.exitPointerLock) {
         document.exitPointerLock();
@@ -322,6 +348,29 @@ export function GameCanvas({
       return next;
     });
   }, []);
+
+  // Deduct consumed ammo from player reserve
+  const handleConsumeReserveAmmo = useCallback(
+    (weapon: 'RIFLE' | 'PISTOL', amount: number) => {
+      setInventory((prev) => {
+        const next = {
+          ...prev,
+          rifleAmmoReserve:
+            weapon === 'RIFLE'
+              ? Math.max(0, (prev.rifleAmmoReserve || 0) - amount)
+              : prev.rifleAmmoReserve,
+          pistolAmmoReserve:
+            weapon === 'PISTOL'
+              ? Math.max(0, (prev.pistolAmmoReserve || 0) - amount)
+              : prev.pistolAmmoReserve,
+        };
+        savePlayerSavedData(localPlayerId, next);
+        onInventoryChange?.(next);
+        return next;
+      });
+    },
+    [localPlayerId, onInventoryChange]
+  );
 
   // Quick Slot Select
   const handleSelectSlot = useCallback(
@@ -413,7 +462,221 @@ export function GameCanvas({
       setMatchSummary(summary);
       if (document.exitPointerLock) document.exitPointerLock();
     };
+
+    (realtimeManager as any).callbacks.onLootDrop = (crate: GroundLootCrate) => {
+      setGroundLootCrates((prev) => {
+        if (prev.some((c) => c.id === crate.id)) return prev;
+        return [...prev, crate];
+      });
+    };
+
+    (realtimeManager as any).callbacks.onLootTaken = ({ crateId }: { crateId: string }) => {
+      setGroundLootCrates((prev) => prev.filter((c) => c.id !== crateId));
+    };
   }, [realtimeManager, isHost, localPlayerId, handleDamagePlayer, handleKillZombie]);
+
+  // Death Drop: when local player dies, drop all active loadout gear on the ground as a loot crate!
+  useEffect(() => {
+    if (health <= 0 && !hasDroppedLootRef.current) {
+      hasDroppedLootRef.current = true;
+
+      const crateLoadout: PlayerLoadout = {
+        slot1: inventory.hasRifle ? (inventory.loadout?.slot1 || createStashItem('M4A1')) : null,
+        slot2: inventory.hasPistol ? (inventory.loadout?.slot2 || createStashItem('PISTOL')) : null,
+        slot3: inventory.iceWalls > 0 ? (inventory.loadout?.slot3 || createStashItem('ICEWALL', inventory.iceWalls)) : null,
+        slot4: inventory.medkits > 0 ? (inventory.loadout?.slot4 || createStashItem('MEDKIT', inventory.medkits)) : null,
+        slot5: inventory.loadout?.slot5 || null,
+        rifleAmmoReserve: (inventory.rifleAmmo || 0) + (inventory.rifleAmmoReserve || 0),
+        pistolAmmoReserve: (inventory.pistolAmmo || 0) + (inventory.pistolAmmoReserve || 0),
+        backpack: inventory.loadout?.backpack ? [...inventory.loadout.backpack] : [],
+      };
+
+      const hasAnyItem = Boolean(
+        crateLoadout.slot1 ||
+        crateLoadout.slot2 ||
+        crateLoadout.slot3 ||
+        crateLoadout.slot4 ||
+        crateLoadout.rifleAmmoReserve > 0 ||
+        crateLoadout.pistolAmmoReserve > 0 ||
+        crateLoadout.backpack.length > 0
+      );
+
+      if (hasAnyItem) {
+        const crate: GroundLootCrate = {
+          id: `crate_${Date.now()}_${localPlayerId}`,
+          ownerId: localPlayerId,
+          ownerName: localPlayerName,
+          position: [localPlayerPosRef.current[0], 0.2, localPlayerPosRef.current[2]],
+          loadout: crateLoadout,
+          money: Math.floor((inventory.money || 0) * 0.15),
+          looted: false,
+          timestamp: Date.now(),
+        };
+        setGroundLootCrates((prev) => [...prev, crate]);
+        realtimeManager?.sendLootDrop(crate);
+      }
+
+      // Hardcore WarZ Death Rule: Wipe equipped loadout, but outpost safe stash remains untouched!
+      setInventory((prev) => {
+        const stripped: PlayerInventory = {
+          ...prev,
+          hasRifle: false,
+          rifleAmmo: 0,
+          rifleAmmoReserve: 0,
+          hasPistol: false,
+          pistolAmmo: 0,
+          pistolAmmoReserve: 0,
+          iceWalls: 0,
+          medkits: 0,
+          loadout: {
+            slot1: null,
+            slot2: null,
+            slot3: null,
+            slot4: null,
+            slot5: null,
+            rifleAmmoReserve: 0,
+            pistolAmmoReserve: 0,
+            backpack: [],
+          },
+        };
+        savePlayerSavedData(localPlayerId, stripped);
+        onInventoryChange?.(stripped);
+        return stripped;
+      });
+    }
+  }, [health, inventory, localPlayerId, localPlayerName, realtimeManager, onInventoryChange]);
+
+  // 10-Second Extraction Zone & [E] Hold to Loot Check Loop
+  useEffect(() => {
+    if (health <= 0) return;
+
+    const interval = setInterval(() => {
+      const [px, , pz] = localPlayerPosRef.current;
+
+      // 1. Extraction Zone Check ([95, 0, 95], radius 8m)
+      const distToLZ = Math.hypot(px - 95, pz - 95);
+      if (distToLZ <= 8.0) {
+        setExtractionTimer((prev) => {
+          if (prev === null) return 10.0;
+          const next = prev - 0.1;
+          if (next <= 0) {
+            // Player successfully extracted!
+            savePlayerSavedData(localPlayerId, inventory);
+            onExitGame();
+            return 0;
+          }
+          return next;
+        });
+      } else {
+        setExtractionTimer(null);
+      }
+
+      // 2. Nearest Ground Loot Crate Proximity Check (2.8m radius)
+      let closestCrate: GroundLootCrate | null = null;
+      let closestDist = 2.8;
+
+      for (const crate of groundLootCrates) {
+        const d = Math.hypot(px - crate.position[0], pz - crate.position[2]);
+        if (d < closestDist) {
+          closestDist = d;
+          closestCrate = crate;
+        }
+      }
+
+      if (closestCrate) {
+        setNearestCrateId(closestCrate.id);
+        if (isHoldingE) {
+          setLootProgress((prog) => {
+            const nextProg = prog + 0.1 / 1.2;
+            if (nextProg >= 1.0) {
+              // Successfully looted crate!
+              sounds.playLootPickup();
+              const crateToLoot = closestCrate!;
+
+              setInventory((prev) => {
+                const nextInv = { ...prev };
+                const crateLoadout = crateToLoot.loadout;
+                const nextBackpack = [...(prev.loadout?.backpack || [])];
+
+                if (crateLoadout.slot1) {
+                  nextInv.hasRifle = true;
+                  nextInv.rifleAmmo = Math.max(nextInv.rifleAmmo, 30);
+                }
+                if (crateLoadout.slot2) {
+                  nextInv.hasPistol = true;
+                  nextInv.pistolAmmo = Math.max(nextInv.pistolAmmo, 6);
+                }
+                if (crateLoadout.slot3) {
+                  nextInv.iceWalls = (nextInv.iceWalls || 0) + (crateLoadout.slot3.count || 1);
+                }
+                if (crateLoadout.slot4) {
+                  nextInv.medkits = (nextInv.medkits || 0) + (crateLoadout.slot4.count || 1);
+                }
+                if (crateLoadout.rifleAmmoReserve) {
+                  nextInv.rifleAmmoReserve = (nextInv.rifleAmmoReserve || 0) + crateLoadout.rifleAmmoReserve;
+                }
+                if (crateLoadout.pistolAmmoReserve) {
+                  nextInv.pistolAmmoReserve = (nextInv.pistolAmmoReserve || 0) + crateLoadout.pistolAmmoReserve;
+                }
+                if (crateToLoot.money > 0) {
+                  nextInv.money = (nextInv.money || 0) + crateToLoot.money;
+                }
+                if (crateLoadout.backpack) {
+                  for (const it of crateLoadout.backpack) {
+                    nextBackpack.push(it);
+                  }
+                }
+
+                nextInv.loadout = {
+                  ...(nextInv.loadout || {}),
+                  slot1: nextInv.hasRifle ? (nextInv.loadout?.slot1 || crateLoadout.slot1 || createStashItem('M4A1')) : null,
+                  slot2: nextInv.hasPistol ? (nextInv.loadout?.slot2 || crateLoadout.slot2 || createStashItem('PISTOL')) : null,
+                  slot3: nextInv.iceWalls > 0 ? (nextInv.loadout?.slot3 || crateLoadout.slot3 || createStashItem('ICEWALL', nextInv.iceWalls)) : null,
+                  slot4: nextInv.medkits > 0 ? (nextInv.loadout?.slot4 || crateLoadout.slot4 || createStashItem('MEDKIT', nextInv.medkits)) : null,
+                  slot5: nextInv.loadout?.slot5 || null,
+                  rifleAmmoReserve: nextInv.rifleAmmoReserve,
+                  pistolAmmoReserve: nextInv.pistolAmmoReserve,
+                  backpack: nextBackpack,
+                };
+
+                savePlayerSavedData(localPlayerId, nextInv);
+                onInventoryChange?.(nextInv);
+                return nextInv;
+              });
+
+              setGroundLootCrates((crates) => crates.filter((c) => c.id !== crateToLoot.id));
+              realtimeManager?.sendLootTaken(crateToLoot.id, localPlayerId);
+              return 0;
+            }
+            return nextProg;
+          });
+        } else {
+          setLootProgress(0);
+        }
+
+        setLootPrompt({
+          name: `${closestCrate.ownerName}'s Crate`,
+          progress: isHoldingE ? lootProgress : 0,
+        });
+      } else {
+        setNearestCrateId(null);
+        setLootPrompt(null);
+        setLootProgress(0);
+      }
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [
+    health,
+    groundLootCrates,
+    isHoldingE,
+    lootProgress,
+    localPlayerId,
+    inventory,
+    onExitGame,
+    realtimeManager,
+    onInventoryChange,
+  ]);
 
   // Game over check
   useEffect(() => {
@@ -471,6 +734,7 @@ export function GameCanvas({
     setTracers([]);
     setGameOver(false);
     setMatchSummary(null);
+    hasDroppedLootRef.current = false;
     gameStartTime.current = Date.now();
     realtimeManager?.sendStartGame();
   };
@@ -484,6 +748,14 @@ export function GameCanvas({
         gl={{ antialias: true, powerPreference: 'high-performance' }}
       >
         <Scene />
+
+        {/* 3D Ground Loot Crates & Backpacks with [E] Hover Prompt */}
+        <GroundLoot
+          crates={groundLootCrates}
+          nearestCrateId={nearestCrateId}
+          lootProgress={lootProgress}
+          isLooting={isHoldingE}
+        />
 
         {/* Local Player Controller */}
         <FirstPersonPlayer
@@ -516,7 +788,9 @@ export function GameCanvas({
           onPlaceIceWall={handlePlaceIceWall}
           onDamageIceWall={handleDamageIceWall}
           onUseMedkit={handleUseMedkit}
-          onToggleShop={handleToggleShop}
+          onToggleInventory={handleToggleInventory}
+          onConsumeReserveAmmo={handleConsumeReserveAmmo}
+          onHoldEChange={setIsHoldingE}
           isLocked={isLocked}
           setIsLocked={setIsLocked}
           isADS={isADS}
@@ -584,17 +858,24 @@ export function GameCanvas({
           isADS={isADS}
           perspective={perspective}
           onSelectSlot={handleSelectSlot}
-          onOpenShop={handleToggleShop}
-          isShopOpen={isShopOpen}
+          playerPos={localPlayerPosRef.current}
+          extractionCountdown={extractionTimer}
+          lootPrompt={lootPrompt}
+          onToggleInventory={handleToggleInventory}
         />
       )}
 
-      {/* Armory & Supply Depot Shop Modal */}
-      <ShopModal
-        isOpen={isShopOpen}
-        onClose={() => setIsShopOpen(false)}
+      {/* WarZ In-Game Backpack Modal (No buying allowed in raid!) */}
+      <WarZInventoryModal
+        isOpen={isInventoryOpen}
+        onClose={() => setIsInventoryOpen(false)}
         inventory={inventory}
-        onBuyItem={handleBuyItem}
+        onUpdateInventory={(nextInv) => {
+          setInventory(nextInv);
+          savePlayerSavedData(localPlayerId, nextInv);
+          onInventoryChange?.(nextInv);
+        }}
+        mode="IN_GAME"
       />
 
       {/* Game Over Modal */}

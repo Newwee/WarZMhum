@@ -4,17 +4,17 @@ import React, { useState, useEffect } from 'react';
 import { ShieldAlert, Crosshair, Users, Play, ArrowRight, Radio, Sparkles, ShoppingBag, DollarSign, Shield, Zap } from 'lucide-react';
 import { isSupabaseConfigured } from '@/lib/supabase/client';
 import { PlayerInventory } from '@/types/game';
-import { ShopModal } from '@/components/game/ShopModal';
+import { WarZInventoryModal } from '@/components/game/WarZInventoryModal';
 
 interface MainMenuProps {
   onPlayPublic: (playerName: string) => void;
   onCreateRoom: (playerName: string) => void;
   onJoinRoom: (roomCode: string, playerName: string) => void;
   inventory: PlayerInventory;
-  onBuyItem: (itemKey: 'RIFLE' | 'RIFLE_AMMO' | 'PISTOL' | 'PISTOL_AMMO' | 'ICEWALL' | 'MEDKIT', cost: number) => void;
+  onInventoryChange: (inv: PlayerInventory) => void;
 }
 
-export function MainMenu({ onPlayPublic, onCreateRoom, onJoinRoom, inventory, onBuyItem }: MainMenuProps) {
+export function MainMenu({ onPlayPublic, onCreateRoom, onJoinRoom, inventory, onInventoryChange }: MainMenuProps) {
   const [playerName, setPlayerName] = useState('Survivor');
   const [roomCodeInput, setRoomCodeInput] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -225,12 +225,13 @@ export function MainMenu({ onPlayPublic, onCreateRoom, onJoinRoom, inventory, on
         </div>
       </main>
 
-      {/* Lobby Armory & Loadout Shop Modal */}
-      <ShopModal
+      {/* WarZ Global Stash & Loadout Modal */}
+      <WarZInventoryModal
         isOpen={isShopOpen}
         onClose={() => setIsShopOpen(false)}
         inventory={inventory}
-        onBuyItem={onBuyItem}
+        onUpdateInventory={onInventoryChange}
+        mode="LOBBY"
       />
 
       {/* Footer Info */}

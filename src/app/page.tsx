@@ -6,6 +6,7 @@ import { RoomLobby } from '@/components/lobby/RoomLobby';
 import { GameCanvas } from '@/components/game/GameCanvas';
 import { RealtimeManager } from '@/lib/network/realtime-manager';
 import { RoomMember, PlayerInventory } from '@/types/game';
+import { loadPlayerSavedData, savePlayerSavedData, INITIAL_INVENTORY } from '@/lib/game/inventory-system';
 
 export default function HomePage() {
   const [view, setView] = useState<'MENU' | 'LOBBY' | 'GAME'>('MENU');
@@ -15,20 +16,12 @@ export default function HomePage() {
   const [isHost, setIsHost] = useState(false);
   const [members, setMembers] = useState<RoomMember[]>([]);
 
-  // Persistent Survivor Loadout & Funds (Starts with $10,000 cash and unarmed)
-  const [inventory, setInventory] = useState<PlayerInventory>({
-    money: 10000,
-    hasRifle: false,
-    rifleAmmo: 0,
-    hasPistol: false,
-    pistolAmmo: 0,
-    iceWalls: 0,
-    medkits: 0,
-  });
+  // Persistent Survivor Loadout & Global Stash
+  const [inventory, setInventory] = useState<PlayerInventory>(INITIAL_INVENTORY);
 
   const realtimeManagerRef = useRef<RealtimeManager | null>(null);
 
-  // Initialize unique session ID
+  // Initialize unique session ID and load saved inventory
   useEffect(() => {
     let sid = sessionStorage.getItem('warz_session_id');
     if (!sid) {
@@ -36,6 +29,9 @@ export default function HomePage() {
       sessionStorage.setItem('warz_session_id', sid);
     }
     setLocalPlayerId(sid);
+
+    const saved = loadPlayerSavedData(sid);
+    setInventory(saved);
 
     // Auto-fill room code from URL query parameter (e.g. ?room=WZ-84A)
     const urlParams = new URLSearchParams(window.location.search);
@@ -45,39 +41,20 @@ export default function HomePage() {
     }
   }, []);
 
+  // Persistent inventory change handler
+  const handleInventoryChange = (newInv: PlayerInventory) => {
+    setInventory(newInv);
+    if (localPlayerId) {
+      savePlayerSavedData(localPlayerId, newInv);
+    }
+  };
+
   // Cleanup network on unmount
   useEffect(() => {
     return () => {
       realtimeManagerRef.current?.disconnect();
     };
   }, []);
-
-  // Armory Item Purchase (in Lobby or Staging Area)
-  const handleBuyItem = (
-    itemKey: 'RIFLE' | 'RIFLE_AMMO' | 'PISTOL' | 'PISTOL_AMMO' | 'ICEWALL' | 'MEDKIT',
-    cost: number
-  ) => {
-    setInventory((prev) => {
-      if (prev.money < cost) return prev;
-      const next = { ...prev, money: prev.money - cost };
-      if (itemKey === 'RIFLE') {
-        next.hasRifle = true;
-        next.rifleAmmo = prev.rifleAmmo + 60;
-      } else if (itemKey === 'RIFLE_AMMO') {
-        next.rifleAmmo = prev.rifleAmmo + 30;
-      } else if (itemKey === 'PISTOL') {
-        next.hasPistol = true;
-        next.pistolAmmo = prev.pistolAmmo + 18;
-      } else if (itemKey === 'PISTOL_AMMO') {
-        next.pistolAmmo = prev.pistolAmmo + 12;
-      } else if (itemKey === 'ICEWALL') {
-        next.iceWalls = prev.iceWalls + 1;
-      } else if (itemKey === 'MEDKIT') {
-        next.medkits = prev.medkits + 1;
-      }
-      return next;
-    });
-  };
 
   // 1. PLAY NOW (Instant entry into Public Shared Warzone WARZ-GLOBAL)
   const handlePlayPublic = async (name: string) => {
@@ -205,7 +182,7 @@ export default function HomePage() {
           onCreateRoom={handleCreateRoom}
           onJoinRoom={handleJoinRoom}
           inventory={inventory}
-          onBuyItem={handleBuyItem}
+          onInventoryChange={handleInventoryChange}
         />
       )}
 
@@ -219,7 +196,7 @@ export default function HomePage() {
           onStartGame={handleStartGame}
           onLeaveRoom={handleLeaveRoom}
           inventory={inventory}
-          onBuyItem={handleBuyItem}
+          onInventoryChange={handleInventoryChange}
         />
       )}
 
@@ -232,7 +209,7 @@ export default function HomePage() {
           realtimeManager={realtimeManagerRef.current}
           onExitGame={handleLeaveRoom}
           initialInventory={inventory}
-          onInventoryChange={setInventory}
+          onInventoryChange={handleInventoryChange}
         />
       )}
     </div>

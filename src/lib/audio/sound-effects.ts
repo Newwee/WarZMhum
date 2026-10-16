@@ -383,6 +383,42 @@ class SoundManager {
       osc.stop(t + idx * 0.08 + 0.36);
     });
   }
+
+  // Empty gun dry-fire metallic click
+  public playEmptyClick() {
+    this.initCtx();
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(1200, t);
+    gain.gain.setValueAtTime(0.3, t);
+    gain.gain.exponentialRampToValueAtTime(0.01, t + 0.04);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.04);
+  }
+
+  // WarZ Backpack / Crate zip loot pickup sound
+  public playLootPickup() {
+    this.initCtx();
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    [600, 800, 1100].forEach((freq, i) => {
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t + i * 0.05);
+      gain.gain.setValueAtTime(0.35, t + i * 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.01, t + i * 0.05 + 0.08);
+      osc.connect(gain);
+      gain.connect(this.ctx!.destination);
+      osc.start(t + i * 0.05);
+      osc.stop(t + i * 0.05 + 0.09);
+    });
+  }
 }
 
 export const sounds = new SoundManager();

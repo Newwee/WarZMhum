@@ -27,6 +27,10 @@ interface GameHUDProps {
   onSelectSlot: (weapon: WeaponType) => void;
   onOpenShop?: () => void;
   isShopOpen?: boolean;
+  playerPos?: [number, number, number];
+  extractionCountdown?: number | null;
+  lootPrompt?: { name: string; progress: number } | null;
+  onToggleInventory?: () => void;
 }
 
 export function GameHUD({
@@ -52,8 +56,15 @@ export function GameHUD({
   onSelectSlot,
   onOpenShop,
   isShopOpen = false,
+  playerPos,
+  extractionCountdown,
+  lootPrompt,
+  onToggleInventory,
 }: GameHUDProps) {
   const hpPercent = Math.max(0, Math.min(100, (health / maxHealth) * 100));
+  const distToExtract = playerPos
+    ? Math.round(Math.hypot(playerPos[0] - 95, playerPos[2] - 95))
+    : null;
 
   return (
     <div className="absolute inset-0 pointer-events-none select-none z-10 flex flex-col justify-between p-4 sm:p-6 overflow-hidden">
@@ -116,11 +127,21 @@ export function GameHUD({
         </div>
 
         {/* Top-Center: Minimal Open Survival Zone Badge (No Wave Counter) */}
-        <div className="bg-black/70 backdrop-blur-md border border-zinc-800/80 px-4 py-1.5 rounded-full flex items-center gap-2 shadow-2xl">
-          <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
-          <span className="text-[11px] font-mono font-bold text-zinc-300 tracking-wider uppercase">
-            OPEN SURVIVAL ZONE // WARZ PVP
-          </span>
+        <div className="flex flex-col items-center gap-1">
+          <div className="bg-black/70 backdrop-blur-md border border-zinc-800/80 px-4 py-1.5 rounded-full flex items-center gap-2 shadow-2xl">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-ping" />
+            <span className="text-[11px] font-mono font-bold text-zinc-300 tracking-wider uppercase">
+              OPEN SURVIVAL ZONE // WARZ PVP
+            </span>
+          </div>
+
+          {/* Extraction Zone Beacon Radar Pill */}
+          <div className="bg-emerald-950/80 border border-emerald-500/50 rounded-full px-3 py-0.5 flex items-center gap-2 shadow-lg">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-[10px] font-mono font-bold text-emerald-300">
+              EXTRACT LZ: {distToExtract !== null ? `${distToExtract}m` : 'LOCATING...'} [SE]
+            </span>
+          </div>
         </div>
 
         {/* Top-Right: WarZ Tactical Compass Dial & Live KillFeed */}
@@ -193,6 +214,41 @@ export function GameHUD({
           )}
         </div>
       </div>
+
+      {/* 10-Second Extraction Countdown Banner */}
+      {typeof extractionCountdown === 'number' && (
+        <div className="fixed top-24 left-1/2 -translate-x-1/2 bg-black/95 border-2 border-emerald-500 rounded-xl px-7 py-3.5 shadow-[0_0_35px_rgba(16,185,129,0.5)] flex flex-col items-center gap-2 pointer-events-none z-50">
+          <div className="flex items-center gap-2.5 text-emerald-400 font-mono font-black text-sm tracking-widest uppercase">
+            <Radio className="w-5 h-5 animate-pulse text-emerald-400" />
+            EXTRACTION IN PROGRESS: {Math.max(0, extractionCountdown).toFixed(1)}s
+          </div>
+          <div className="text-[11px] font-mono text-zinc-400">
+            HOLD POSITION &bull; DO NOT MOVE OR TAKE DAMAGE
+          </div>
+          <div className="w-64 h-2.5 bg-zinc-800 rounded-full overflow-hidden border border-emerald-500/50">
+            <div
+              className="h-full bg-emerald-500 transition-all duration-100 ease-linear"
+              style={{ width: `${Math.max(0, Math.min(100, ((10 - extractionCountdown) / 10) * 100))}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* [E] Hold To Loot Overlay */}
+      {lootPrompt && (
+        <div className="fixed bottom-36 left-1/2 -translate-x-1/2 bg-black/90 border border-amber-500/80 rounded-xl px-5 py-3 shadow-2xl flex flex-col items-center gap-2 pointer-events-none z-40">
+          <div className="flex items-center gap-2 text-amber-300 font-mono font-bold text-xs">
+            <span className="px-2 py-0.5 rounded bg-amber-500 text-black font-black">HOLD [E]</span>
+            <span>LOOT {lootPrompt.name.toUpperCase()}</span>
+          </div>
+          <div className="w-48 h-2 bg-zinc-800 rounded-full overflow-hidden border border-amber-500/50">
+            <div
+              className="h-full bg-amber-400 transition-all duration-75 ease-linear"
+              style={{ width: `${Math.min(100, Math.max(0, lootPrompt.progress * 100))}%` }}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Pointer Lock Overlay (Only when not locked AND shop is closed) */}
       {!isLocked && !isShopOpen && (
@@ -402,6 +458,14 @@ export function GameHUD({
           >
             [5] UNARMED
           </button>
+
+          {/* [TAB] In-Game Backpack */}
+          <button
+            onClick={onToggleInventory}
+            className="px-3 py-1.5 rounded-lg font-mono text-xs font-bold border border-amber-600/70 bg-amber-950/40 text-amber-300 hover:text-white hover:bg-amber-900/60 transition-all cursor-pointer shadow-sm"
+          >
+            [TAB] BACKPACK
+          </button>
         </div>
 
         {/* 3. BOTTOM-RIGHT: WarZ Weapon & Ammo Counter */}
@@ -463,6 +527,9 @@ export function GameHUD({
                   {isReloading ? '--' : ammo}
                 </span>
                 <span className="text-zinc-500 font-bold text-sm">/ {maxAmmo}</span>
+                <span className="text-emerald-400 font-bold text-xs ml-1 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-500/40">
+                  +{currentWeapon === 'RIFLE' ? (inventory.rifleAmmoReserve || 0) : (inventory.pistolAmmoReserve || 0)}
+                </span>
               </div>
 
               {isReloading ? (

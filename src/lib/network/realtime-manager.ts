@@ -1,5 +1,5 @@
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
-import { Room, RoomMember, PlayerNetState, ZombieNetState, ShootEvent, WaveState, MatchSummary, IceWallObject, KillFeedItem } from '@/types/game';
+import { Room, RoomMember, PlayerNetState, ZombieNetState, ShootEvent, WaveState, MatchSummary, IceWallObject, KillFeedItem, GroundLootCrate } from '@/types/game';
 import { RealtimeChannel } from '@supabase/supabase-js';
 
 export interface NetworkCallbacks {
@@ -15,6 +15,8 @@ export interface NetworkCallbacks {
   onIceWallSpawn?: (wall: IceWallObject) => void;
   onIceWallDamage?: (data: { id: string; damage: number }) => void;
   onKillFeed?: (item: KillFeedItem) => void;
+  onLootDrop?: (crate: GroundLootCrate) => void;
+  onLootTaken?: (data: { crateId: string; looterId: string }) => void;
 }
 
 export class RealtimeManager {
@@ -108,6 +110,12 @@ export class RealtimeManager {
         })
         .on('broadcast', { event: 'kill_feed' }, ({ payload }) => {
           this.callbacks.onKillFeed?.(payload);
+        })
+        .on('broadcast', { event: 'loot_drop' }, ({ payload }) => {
+          this.callbacks.onLootDrop?.(payload);
+        })
+        .on('broadcast', { event: 'loot_taken' }, ({ payload }) => {
+          this.callbacks.onLootTaken?.(payload);
         });
 
       // Subscribe and track presence
@@ -144,6 +152,8 @@ export class RealtimeManager {
           if (type === 'icewall_spawn') this.callbacks.onIceWallSpawn?.(payload);
           if (type === 'icewall_damage') this.callbacks.onIceWallDamage?.(payload);
           if (type === 'kill_feed') this.callbacks.onKillFeed?.(payload);
+          if (type === 'loot_drop') this.callbacks.onLootDrop?.(payload);
+          if (type === 'loot_taken') this.callbacks.onLootTaken?.(payload);
         };
       }
       return true;
@@ -325,6 +335,37 @@ export class RealtimeManager {
     } else if (this.localBroadcast) {
       this.localBroadcast.postMessage({
         type: 'icewall_damage',
+        payload,
+      });
+    }
+  }
+
+  public sendLootDrop(crate: GroundLootCrate) {
+    if (this.channel) {
+      this.channel.send({
+        type: 'broadcast',
+        event: 'loot_drop',
+        payload: crate,
+      });
+    } else if (this.localBroadcast) {
+      this.localBroadcast.postMessage({
+        type: 'loot_drop',
+        payload: crate,
+      });
+    }
+  }
+
+  public sendLootTaken(crateId: string, looterId: string) {
+    const payload = { crateId, looterId };
+    if (this.channel) {
+      this.channel.send({
+        type: 'broadcast',
+        event: 'loot_taken',
+        payload,
+      });
+    } else if (this.localBroadcast) {
+      this.localBroadcast.postMessage({
+        type: 'loot_taken',
         payload,
       });
     }

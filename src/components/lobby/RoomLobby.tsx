@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { RoomMember, PlayerInventory } from '@/types/game';
 import { Users, Copy, Check, Play, LogOut, Crown, ShieldCheck, ShieldAlert, Sparkles, ShoppingBag } from 'lucide-react';
-import { ShopModal } from '@/components/game/ShopModal';
+import { WarZInventoryModal } from '@/components/game/WarZInventoryModal';
 
 interface RoomLobbyProps {
   roomCode: string;
@@ -14,7 +14,7 @@ interface RoomLobbyProps {
   onStartGame: () => void;
   onLeaveRoom: () => void;
   inventory: PlayerInventory;
-  onBuyItem: (itemKey: 'RIFLE' | 'RIFLE_AMMO' | 'PISTOL' | 'PISTOL_AMMO' | 'ICEWALL' | 'MEDKIT', cost: number) => void;
+  onInventoryChange: (inv: PlayerInventory) => void;
 }
 
 export function RoomLobby({
@@ -26,7 +26,7 @@ export function RoomLobby({
   onStartGame,
   onLeaveRoom,
   inventory,
-  onBuyItem,
+  onInventoryChange,
 }: RoomLobbyProps) {
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
@@ -218,11 +218,12 @@ export function RoomLobby({
       </main>
 
       {/* Armory & Loadout Shop Modal */}
-      <ShopModal
+      <WarZInventoryModal
         isOpen={isShopOpen}
         onClose={() => setIsShopOpen(false)}
         inventory={inventory}
-        onBuyItem={onBuyItem}
+        onUpdateInventory={onInventoryChange}
+        mode="LOBBY"
       />
 
       {/* Footer */}

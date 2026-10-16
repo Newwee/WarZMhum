@@ -62,12 +62,12 @@ export function Zombies({
     if (!isHost) return;
 
     if (zombiesRef.current.length === 0) {
-      const initialCount = 25;
+      const initialCount = 35;
       const initialZombies: ZombieNetState[] = [];
 
       for (let i = 0; i < initialCount; i++) {
         const angle = Math.random() * Math.PI * 2;
-        const radius = 16 + Math.random() * 28;
+        const radius = 25 + Math.random() * 95;
         const x = Math.cos(angle) * radius;
         const z = Math.sin(angle) * radius;
 
@@ -255,8 +255,8 @@ export function Zombies({
         if (wd.isMoving) {
           const wanderSpeed = 0.65;
           const step = wanderSpeed * delta;
-          const newX = Math.max(-50, Math.min(50, zombie.position[0] + Math.sin(wd.angle) * step));
-          const newZ = Math.max(-50, Math.min(50, zombie.position[2] + Math.cos(wd.angle) * step));
+          const newX = Math.max(-138, Math.min(138, zombie.position[0] + Math.sin(wd.angle) * step));
+          const newZ = Math.max(-138, Math.min(138, zombie.position[2] + Math.cos(wd.angle) * step));
 
           nextZombies.push({
             ...zombie,
