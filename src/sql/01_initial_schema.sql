@@ -1,6 +1,6 @@
 -- ====================================================================
 -- WARZ SURVIVAL MULTIPLAYER: SUPABASE DATABASE INITIAL SCHEMA & RLS
--- Project Ref: vgfpvhdssbfsipashupj
+-- Project Ref: lgodorglbrkjifehulma
 -- ====================================================================
 
 -- Enable UUID extension if not enabled
