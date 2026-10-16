@@ -59,14 +59,37 @@ export function GameCanvas({
 
   // Choose starting weapon based on purchased Lobby loadout
   const [currentWeapon, setCurrentWeapon] = useState<WeaponType>(() => {
+    if (initialInventory?.hasSniper) return 'SNIPER';
+    if (initialInventory?.hasShotgun) return 'SHOTGUN';
     if (initialInventory?.hasRifle) return 'RIFLE';
     if (initialInventory?.hasPistol) return 'PISTOL';
+    if (initialInventory?.hasKnife) return 'KNIFE';
     if (initialInventory && initialInventory.iceWalls > 0) return 'ICEWALL';
     if (initialInventory && initialInventory.medkits > 0) return 'MEDKIT';
     return 'UNARMED';
   });
-  const [ammo, setAmmo] = useState(() => (initialInventory?.hasRifle ? 30 : initialInventory?.hasPistol ? 6 : 0));
-  const [maxAmmo, setMaxAmmo] = useState(() => (initialInventory?.hasRifle ? 30 : initialInventory?.hasPistol ? 6 : 0));
+  const [ammo, setAmmo] = useState(() =>
+    initialInventory?.hasSniper
+      ? initialInventory.sniperAmmo || 5
+      : initialInventory?.hasShotgun
+      ? initialInventory.shotgunAmmo || 8
+      : initialInventory?.hasRifle
+      ? initialInventory.rifleAmmo || 30
+      : initialInventory?.hasPistol
+      ? initialInventory.pistolAmmo || 6
+      : 0
+  );
+  const [maxAmmo, setMaxAmmo] = useState(() =>
+    initialInventory?.hasSniper
+      ? 5
+      : initialInventory?.hasShotgun
+      ? 8
+      : initialInventory?.hasRifle
+      ? 30
+      : initialInventory?.hasPistol
+      ? 6
+      : 0
+  );
   const [isReloading, setIsReloading] = useState(false);
   const [score, setScore] = useState(0);
   const [kills, setKills] = useState(0);
@@ -117,12 +140,18 @@ export function GameCanvas({
   // Switch weapon logic
   const handleWeaponChange = (newWeapon: WeaponType) => {
     setCurrentWeapon(newWeapon);
-    if (newWeapon === 'PISTOL') {
-      setMaxAmmo(6);
-      setAmmo(6);
+    if (newWeapon === 'SNIPER') {
+      setMaxAmmo(5);
+      setAmmo(inventory.sniperAmmo || 5);
+    } else if (newWeapon === 'SHOTGUN') {
+      setMaxAmmo(8);
+      setAmmo(inventory.shotgunAmmo || 8);
     } else if (newWeapon === 'RIFLE') {
       setMaxAmmo(30);
-      setAmmo(30);
+      setAmmo(inventory.rifleAmmo || 30);
+    } else if (newWeapon === 'PISTOL') {
+      setMaxAmmo(6);
+      setAmmo(inventory.pistolAmmo || 6);
     } else {
       setMaxAmmo(0);
       setAmmo(0);
@@ -368,7 +397,7 @@ export function GameCanvas({
 
   // Deduct consumed ammo from player reserve
   const handleConsumeReserveAmmo = useCallback(
-    (weapon: 'RIFLE' | 'PISTOL', amount: number) => {
+    (weapon: 'RIFLE' | 'PISTOL' | 'SNIPER' | 'SHOTGUN', amount: number) => {
       setInventory((prev) => {
         const next = {
           ...prev,
@@ -380,6 +409,14 @@ export function GameCanvas({
             weapon === 'PISTOL'
               ? Math.max(0, (prev.pistolAmmoReserve || 0) - amount)
               : prev.pistolAmmoReserve,
+          sniperAmmoReserve:
+            weapon === 'SNIPER'
+              ? Math.max(0, (prev.sniperAmmoReserve || 0) - amount)
+              : prev.sniperAmmoReserve,
+          shotgunAmmoReserve:
+            weapon === 'SHOTGUN'
+              ? Math.max(0, (prev.shotgunAmmoReserve || 0) - amount)
+              : prev.shotgunAmmoReserve,
         };
         savePlayerSavedData(localPlayerId, next);
         onInventoryChange?.(next);
@@ -497,14 +534,32 @@ export function GameCanvas({
     if (health <= 0 && !hasDroppedLootRef.current) {
       hasDroppedLootRef.current = true;
 
+      const crateSlot1 = inventory.hasSniper
+        ? (inventory.loadout?.slot1 || createStashItem('SNIPER'))
+        : inventory.hasShotgun
+        ? (inventory.loadout?.slot1 || createStashItem('SHOTGUN'))
+        : inventory.hasRifle
+        ? (inventory.loadout?.slot1 || createStashItem('M4A1'))
+        : null;
+
+      const crateSlot2 = inventory.hasPistol
+        ? (inventory.loadout?.slot2 || createStashItem('PISTOL'))
+        : null;
+
+      const crateSlot5 = inventory.hasKnife
+        ? (inventory.loadout?.slot5 || createStashItem('KNIFE'))
+        : (inventory.loadout?.slot5 || null);
+
       const crateLoadout: PlayerLoadout = {
-        slot1: inventory.hasRifle ? (inventory.loadout?.slot1 || createStashItem('M4A1')) : null,
-        slot2: inventory.hasPistol ? (inventory.loadout?.slot2 || createStashItem('PISTOL')) : null,
+        slot1: crateSlot1,
+        slot2: crateSlot2,
         slot3: inventory.iceWalls > 0 ? (inventory.loadout?.slot3 || createStashItem('ICEWALL', inventory.iceWalls)) : null,
         slot4: inventory.medkits > 0 ? (inventory.loadout?.slot4 || createStashItem('MEDKIT', inventory.medkits)) : null,
-        slot5: inventory.loadout?.slot5 || null,
+        slot5: crateSlot5,
         rifleAmmoReserve: (inventory.rifleAmmo || 0) + (inventory.rifleAmmoReserve || 0),
         pistolAmmoReserve: (inventory.pistolAmmo || 0) + (inventory.pistolAmmoReserve || 0),
+        sniperAmmoReserve: (inventory.sniperAmmo || 0) + (inventory.sniperAmmoReserve || 0),
+        shotgunAmmoReserve: (inventory.shotgunAmmo || 0) + (inventory.shotgunAmmoReserve || 0),
         backpack: inventory.loadout?.backpack ? [...inventory.loadout.backpack] : [],
       };
 
@@ -513,8 +568,11 @@ export function GameCanvas({
         crateLoadout.slot2 ||
         crateLoadout.slot3 ||
         crateLoadout.slot4 ||
+        crateLoadout.slot5 ||
         crateLoadout.rifleAmmoReserve > 0 ||
         crateLoadout.pistolAmmoReserve > 0 ||
+        crateLoadout.sniperAmmoReserve > 0 ||
+        crateLoadout.shotgunAmmoReserve > 0 ||
         crateLoadout.backpack.length > 0
       );
 
@@ -543,6 +601,13 @@ export function GameCanvas({
           hasPistol: false,
           pistolAmmo: 0,
           pistolAmmoReserve: 0,
+          hasSniper: false,
+          sniperAmmo: 0,
+          sniperAmmoReserve: 0,
+          hasShotgun: false,
+          shotgunAmmo: 0,
+          shotgunAmmoReserve: 0,
+          hasKnife: false,
           iceWalls: 0,
           medkits: 0,
           loadout: {
@@ -553,6 +618,8 @@ export function GameCanvas({
             slot5: null,
             rifleAmmoReserve: 0,
             pistolAmmoReserve: 0,
+            sniperAmmoReserve: 0,
+            shotgunAmmoReserve: 0,
             backpack: [],
           },
         };
@@ -616,8 +683,16 @@ export function GameCanvas({
                 const nextBackpack = [...(prev.loadout?.backpack || [])];
 
                 if (crateLoadout.slot1) {
-                  nextInv.hasRifle = true;
-                  nextInv.rifleAmmo = Math.max(nextInv.rifleAmmo, 30);
+                  if (crateLoadout.slot1.key === 'SNIPER') {
+                    nextInv.hasSniper = true;
+                    nextInv.sniperAmmo = Math.max(nextInv.sniperAmmo || 0, 5);
+                  } else if (crateLoadout.slot1.key === 'SHOTGUN') {
+                    nextInv.hasShotgun = true;
+                    nextInv.shotgunAmmo = Math.max(nextInv.shotgunAmmo || 0, 8);
+                  } else {
+                    nextInv.hasRifle = true;
+                    nextInv.rifleAmmo = Math.max(nextInv.rifleAmmo || 0, 30);
+                  }
                 }
                 if (crateLoadout.slot2) {
                   nextInv.hasPistol = true;
@@ -629,11 +704,20 @@ export function GameCanvas({
                 if (crateLoadout.slot4) {
                   nextInv.medkits = (nextInv.medkits || 0) + (crateLoadout.slot4.count || 1);
                 }
+                if (crateLoadout.slot5?.key === 'KNIFE') {
+                  nextInv.hasKnife = true;
+                }
                 if (crateLoadout.rifleAmmoReserve) {
                   nextInv.rifleAmmoReserve = (nextInv.rifleAmmoReserve || 0) + crateLoadout.rifleAmmoReserve;
                 }
                 if (crateLoadout.pistolAmmoReserve) {
                   nextInv.pistolAmmoReserve = (nextInv.pistolAmmoReserve || 0) + crateLoadout.pistolAmmoReserve;
+                }
+                if (crateLoadout.sniperAmmoReserve) {
+                  nextInv.sniperAmmoReserve = (nextInv.sniperAmmoReserve || 0) + crateLoadout.sniperAmmoReserve;
+                }
+                if (crateLoadout.shotgunAmmoReserve) {
+                  nextInv.shotgunAmmoReserve = (nextInv.shotgunAmmoReserve || 0) + crateLoadout.shotgunAmmoReserve;
                 }
                 if (crateToLoot.money > 0) {
                   nextInv.money = (nextInv.money || 0) + crateToLoot.money;
@@ -646,13 +730,21 @@ export function GameCanvas({
 
                 nextInv.loadout = {
                   ...(nextInv.loadout || {}),
-                  slot1: nextInv.hasRifle ? (nextInv.loadout?.slot1 || crateLoadout.slot1 || createStashItem('M4A1')) : null,
+                  slot1: nextInv.hasSniper
+                    ? (nextInv.loadout?.slot1 || crateLoadout.slot1 || createStashItem('SNIPER'))
+                    : nextInv.hasShotgun
+                    ? (nextInv.loadout?.slot1 || crateLoadout.slot1 || createStashItem('SHOTGUN'))
+                    : nextInv.hasRifle
+                    ? (nextInv.loadout?.slot1 || crateLoadout.slot1 || createStashItem('M4A1'))
+                    : null,
                   slot2: nextInv.hasPistol ? (nextInv.loadout?.slot2 || crateLoadout.slot2 || createStashItem('PISTOL')) : null,
                   slot3: nextInv.iceWalls > 0 ? (nextInv.loadout?.slot3 || crateLoadout.slot3 || createStashItem('ICEWALL', nextInv.iceWalls)) : null,
                   slot4: nextInv.medkits > 0 ? (nextInv.loadout?.slot4 || crateLoadout.slot4 || createStashItem('MEDKIT', nextInv.medkits)) : null,
-                  slot5: nextInv.loadout?.slot5 || null,
-                  rifleAmmoReserve: nextInv.rifleAmmoReserve,
-                  pistolAmmoReserve: nextInv.pistolAmmoReserve,
+                  slot5: nextInv.hasKnife ? (nextInv.loadout?.slot5 || crateLoadout.slot5 || createStashItem('KNIFE')) : (nextInv.loadout?.slot5 || null),
+                  rifleAmmoReserve: nextInv.rifleAmmoReserve || 0,
+                  pistolAmmoReserve: nextInv.pistolAmmoReserve || 0,
+                  sniperAmmoReserve: nextInv.sniperAmmoReserve || 0,
+                  shotgunAmmoReserve: nextInv.shotgunAmmoReserve || 0,
                   backpack: nextBackpack,
                 };
 

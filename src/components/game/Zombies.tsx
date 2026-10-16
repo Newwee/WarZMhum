@@ -293,34 +293,43 @@ export function Zombies({
   return (
     <>
       {zombies.map((zombie) => {
-        if (zombie.health <= 0) return null;
-
+        const isDead = zombie.health <= 0 || zombie.state === 'DEAD';
         const isTank = zombie.type === 'TANK';
         const isRunner = zombie.type === 'RUNNER';
         const scale = isTank ? 1.4 : isRunner ? 0.9 : 1.0;
         const skinColor = isTank ? '#2d4739' : isRunner ? '#652323' : '#475549';
 
-        const isChasingOrAttacking = zombie.state === 'CHASING' || zombie.state === 'ATTACKING';
-        const armPitch = isChasingOrAttacking ? Math.PI / 2.2 : Math.PI / 5.5;
+        const isChasingOrAttacking = !isDead && (zombie.state === 'CHASING' || zombie.state === 'ATTACKING');
+        const armPitch = isDead ? 0.1 : isChasingOrAttacking ? Math.PI / 2.2 : Math.PI / 5.5;
 
         return (
           <group
             key={zombie.id}
-            position={[zombie.position[0], 0, zombie.position[2]]}
-            rotation={[0, zombie.rotation, 0]}
+            position={[zombie.position[0], isDead ? 0.15 : 0, zombie.position[2]]}
+            rotation={[isDead ? -Math.PI / 2 + 0.1 : 0, zombie.rotation, isDead ? 0.3 : 0]}
             scale={[scale, scale, scale]}
           >
-            {/* Health Bar above zombie (visible when damaged or in aggro) */}
-            <Html position={[0, 2.2, 0]} center distanceFactor={16}>
-              <div className="w-12 h-1 bg-black/80 rounded border border-zinc-800 overflow-hidden pointer-events-none">
-                <div
-                  className={`h-full ${
-                    isTank ? 'bg-purple-500' : isRunner ? 'bg-amber-500' : 'bg-red-600'
-                  } transition-all`}
-                  style={{ width: `${Math.max(0, (zombie.health / zombie.maxHealth) * 100)}%` }}
-                />
-              </div>
-            </Html>
+            {/* Blood pool under dead zombie */}
+            {isDead && (
+              <mesh position={[0, -0.1, 0.4]} rotation={[-Math.PI / 2, 0, 0]}>
+                <circleGeometry args={[0.75, 12]} />
+                <meshStandardMaterial color="#3b0808" roughness={0.3} metalness={0.1} />
+              </mesh>
+            )}
+
+            {/* Health Bar above zombie (visible only when alive and damaged/aggro) */}
+            {!isDead && (
+              <Html position={[0, 2.2, 0]} center distanceFactor={16}>
+                <div className="w-12 h-1 bg-black/80 rounded border border-zinc-800 overflow-hidden pointer-events-none">
+                  <div
+                    className={`h-full ${
+                      isTank ? 'bg-purple-500' : isRunner ? 'bg-amber-500' : 'bg-red-600'
+                    } transition-all`}
+                    style={{ width: `${Math.max(0, (zombie.health / zombie.maxHealth) * 100)}%` }}
+                  />
+                </div>
+              </Html>
+            )}
 
             {/* Zombie Head */}
             <mesh position={[0, 1.8, 0]} castShadow>
@@ -328,14 +337,14 @@ export function Zombies({
               <meshStandardMaterial color={skinColor} roughness={0.9} />
             </mesh>
 
-            {/* Glowing Eerie Eyes */}
+            {/* Glowing Eerie Eyes (darker when dead) */}
             <mesh position={[0.08, 1.85, 0.2]}>
               <sphereGeometry args={[0.03, 8, 8]} />
-              <meshBasicMaterial color={isChasingOrAttacking ? '#ff0000' : '#882222'} />
+              <meshBasicMaterial color={isDead ? '#220000' : isChasingOrAttacking ? '#ff0000' : '#882222'} />
             </mesh>
             <mesh position={[-0.08, 1.85, 0.2]}>
               <sphereGeometry args={[0.03, 8, 8]} />
-              <meshBasicMaterial color={isChasingOrAttacking ? '#ff0000' : '#882222'} />
+              <meshBasicMaterial color={isDead ? '#220000' : isChasingOrAttacking ? '#ff0000' : '#882222'} />
             </mesh>
 
             {/* Torso with blood stains */}
@@ -344,7 +353,7 @@ export function Zombies({
               <meshStandardMaterial color="#1a201c" roughness={0.8} />
             </mesh>
 
-            {/* Arms - Reach forward only when chasing/attacking, otherwise hang low */}
+            {/* Arms */}
             <mesh position={[0.25, 1.35, isChasingOrAttacking ? 0.35 : 0.1]} rotation={[armPitch, 0, -0.2]}>
               <cylinderGeometry args={[0.08, 0.08, 0.65, 8]} />
               <meshStandardMaterial color={skinColor} roughness={0.9} />

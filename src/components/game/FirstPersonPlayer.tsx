@@ -41,7 +41,7 @@ interface FirstPersonPlayerProps {
   onDamageIceWall: (id: string, damage: number) => void;
   onUseMedkit: () => void;
   onToggleInventory?: () => void;
-  onConsumeReserveAmmo?: (weapon: 'RIFLE' | 'PISTOL', amount: number) => void;
+  onConsumeReserveAmmo?: (weapon: 'RIFLE' | 'PISTOL' | 'SNIPER' | 'SHOTGUN', amount: number) => void;
   onHoldEChange?: (isHolding: boolean) => void;
   isLocked: boolean;
   setIsLocked: (locked: boolean) => void;
@@ -106,16 +106,400 @@ export function FirstPersonPlayer({
   const euler = useRef(new THREE.Euler(0, 0, 0, 'YXZ'));
   const isGrounded = useRef(true);
 
-  // Gun holder attached to camera
-  const gunHolderRef = useRef<THREE.Group>(null);
-
-  // Recoil & camera kick
+  // Recoil, camera kick, and fire loops
   const recoilVal = useRef(0);
   const cameraKick = useRef(0);
   const isShootingRef = useRef(false);
   const bobbingTimer = useRef(0);
+  const isMouseDownRef = useRef(false);
+  const lastShotTimeRef = useRef(0);
 
-  // Keyboard controls & Mouse lock listeners
+  // Action Animations: Punch combo & Knife slash progress
+  const [attackProgress, setAttackProgress] = useState(0);
+  const [punchSide, setPunchSide] = useState<'LEFT' | 'RIGHT'>('RIGHT');
+  const [isSprintingState, setIsSprintingState] = useState(false);
+  const deathSoundPlayed = useRef(false);
+
+  // Reload Logic for all gun types
+  const handleReload = useCallback(() => {
+    if (isReloading) return;
+    const isRifle = currentWeapon === 'RIFLE';
+    const isPistol = currentWeapon === 'PISTOL';
+    const isSniper = currentWeapon === 'SNIPER';
+    const isShotgun = currentWeapon === 'SHOTGUN';
+    if (!isRifle && !isPistol && !isSniper && !isShotgun) return;
+
+    const needed = maxAmmo - ammo;
+    if (needed <= 0) return;
+
+    let reserve = 0;
+    if (isRifle) reserve = inventory.rifleAmmoReserve || 0;
+    else if (isPistol) reserve = inventory.pistolAmmoReserve || 0;
+    else if (isSniper) reserve = inventory.sniperAmmoReserve || 0;
+    else if (isShotgun) reserve = inventory.shotgunAmmoReserve || 0;
+
+    if (reserve <= 0) {
+      sounds.playEmptyClick();
+      return;
+    }
+
+    const toLoad = Math.min(needed, reserve);
+
+    onReloadStart();
+    sounds.playReload();
+    const duration = isSniper ? 2000 : isShotgun ? 1800 : isRifle ? 1500 : 1300;
+    setTimeout(() => {
+      onConsumeReserveAmmo?.(currentWeapon as any, toLoad);
+      onAmmoChange(ammo + toLoad);
+      onReloadEnd();
+    }, duration);
+  }, [
+    isReloading,
+    currentWeapon,
+    maxAmmo,
+    ammo,
+    inventory.rifleAmmoReserve,
+    inventory.pistolAmmoReserve,
+    inventory.sniperAmmoReserve,
+    inventory.shotgunAmmoReserve,
+    onReloadStart,
+    onReloadEnd,
+    onConsumeReserveAmmo,
+    onAmmoChange,
+  ]);
+
+  // Raycast bullet execution helper for all firearms
+  const executeBulletRaycast = useCallback(
+    (spread: number, baseDamage: number, headMultiplier: number, weaponName: string) => {
+      const rayOrigin = camera.position.clone();
+      const forwardDir = new THREE.Vector3();
+      camera.getWorldDirection(forwardDir);
+
+      forwardDir.x += (Math.random() - 0.5) * spread;
+      forwardDir.y += (Math.random() - 0.5) * spread;
+      forwardDir.normalize();
+
+      let hitZombieId: string | undefined;
+      let hitIceWallId: string | undefined;
+      let hitRemotePlayerId: string | undefined;
+      let hitRemotePlayerName: string | undefined;
+      let hitRemotePlayerHp = 0;
+      let isHeadshot = false;
+      let hitDamage = baseDamage;
+      let hitPos = rayOrigin.clone().add(forwardDir.clone().multiplyScalar(80));
+      let closestDist = 80;
+
+      // 1. Check IceWall absorption
+      const iceWalls = iceWallsRef?.current || [];
+      for (const wall of iceWalls) {
+        if (wall.health <= 0) continue;
+        const [wX, wY, wZ] = wall.position;
+        const toWall = new THREE.Vector3(wX - rayOrigin.x, wY - rayOrigin.y, wZ - rayOrigin.z);
+        const proj = toWall.dot(forwardDir);
+
+        if (proj > 0.4 && proj < closestDist) {
+          const rayPoint = rayOrigin.clone().add(forwardDir.clone().multiplyScalar(proj));
+          const localX = (rayPoint.x - wX) * Math.cos(-wall.rotation) - (rayPoint.z - wZ) * Math.sin(-wall.rotation);
+          const localZ = (rayPoint.x - wX) * Math.sin(-wall.rotation) + (rayPoint.z - wZ) * Math.cos(-wall.rotation);
+          const localY = rayPoint.y - wY;
+
+          if (Math.abs(localX) <= 2.2 && Math.abs(localY) <= 1.4 && Math.abs(localZ) <= 0.6) {
+            closestDist = proj;
+            hitIceWallId = wall.id;
+            hitPos = rayPoint;
+          }
+        }
+      }
+
+      // 2. Check Remote Players
+      for (const remotePlayer of Object.values(remotePlayersRef.current || {})) {
+        if (remotePlayer.id === playerId || remotePlayer.health <= 0) continue;
+        const [pX, pY, pZ] = remotePlayer.transform.position;
+        const toPlayer = new THREE.Vector3(pX - rayOrigin.x, pY - rayOrigin.y, pZ - rayOrigin.z);
+        const proj = toPlayer.dot(forwardDir);
+
+        if (proj > 0.4 && proj < closestDist) {
+          const rayPoint = rayOrigin.clone().add(forwardDir.clone().multiplyScalar(proj));
+          const distToCenter = Math.hypot(rayPoint.x - pX, rayPoint.z - pZ);
+
+          if (distToCenter <= 0.65 && rayPoint.y >= pY - 0.95 && rayPoint.y <= pY + 0.95) {
+            closestDist = proj;
+            hitRemotePlayerId = remotePlayer.id;
+            hitRemotePlayerName = remotePlayer.name;
+            hitRemotePlayerHp = remotePlayer.health;
+            hitZombieId = undefined;
+            hitIceWallId = undefined;
+            hitPos = rayPoint;
+
+            if (rayPoint.y >= pY + 0.35) {
+              isHeadshot = true;
+              hitDamage = Math.round(baseDamage * headMultiplier);
+            } else {
+              isHeadshot = false;
+              hitDamage = baseDamage;
+            }
+          }
+        }
+      }
+
+      // 3. Check Zombies
+      const zombies = zombiesRef.current || [];
+      for (const zombie of zombies) {
+        if (zombie.health <= 0) continue;
+        const [zX, , zZ] = zombie.position;
+        const zRadius = zombie.type === 'TANK' ? 1.4 : 1.0;
+        const toZombie = new THREE.Vector3(zX - rayOrigin.x, 1.0 - rayOrigin.y, zZ - rayOrigin.z);
+        const proj = toZombie.dot(forwardDir);
+
+        if (proj > 0.5 && proj < closestDist) {
+          const rayPoint = rayOrigin.clone().add(forwardDir.clone().multiplyScalar(proj));
+          const horizDist = Math.hypot(rayPoint.x - zX, rayPoint.z - zZ);
+
+          if (horizDist < zRadius && rayPoint.y >= -0.2 && rayPoint.y <= 2.3) {
+            closestDist = proj;
+            hitZombieId = zombie.id;
+            hitRemotePlayerId = undefined;
+            hitIceWallId = undefined;
+            hitPos = rayPoint;
+
+            if (rayPoint.y >= 1.45 && horizDist < 0.5) {
+              isHeadshot = true;
+              hitDamage = Math.round(baseDamage * headMultiplier);
+            } else {
+              isHeadshot = false;
+              hitDamage = baseDamage;
+            }
+          }
+        }
+      }
+
+      // Spawn Bullet Tracer
+      const gunMuzzlePos = camera.position.clone().add(new THREE.Vector3(0.2, -0.15, -0.5).applyQuaternion(camera.quaternion));
+      onSpawnTracer({
+        id: `tracer_${Date.now()}_${Math.random()}`,
+        start: [gunMuzzlePos.x, gunMuzzlePos.y, gunMuzzlePos.z],
+        end: [hitPos.x, hitPos.y, hitPos.z],
+        life: 1.0,
+      });
+
+      // Apply Hit Results
+      if (hitIceWallId) {
+        onDamageIceWall(hitIceWallId, hitDamage);
+        sounds.playIceWallPlace();
+      } else if (hitRemotePlayerId && hitRemotePlayerName) {
+        if (isHeadshot) sounds.playHeadshot();
+        else sounds.playZombieHit();
+        onHitMarker(isHeadshot);
+
+        onSpawnBloodPool({
+          id: `blood_${Date.now()}_${Math.random()}`,
+          x: hitPos.x,
+          z: hitPos.z,
+          radius: isHeadshot ? 1.3 : 0.8,
+          rotation: Math.random() * Math.PI * 2,
+        });
+
+        realtimeManager?.sendPlayerDamaged(hitRemotePlayerId, hitDamage, playerName, weaponName, isHeadshot);
+
+        if (hitRemotePlayerHp <= hitDamage) {
+          realtimeManager?.sendKillFeed({
+            id: `kf_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            killerName: playerName,
+            victimName: hitRemotePlayerName,
+            weapon: weaponName,
+            isHeadshot,
+            isPvP: true,
+            timestamp: Date.now(),
+          });
+        }
+      } else if (hitZombieId) {
+        if (isHeadshot) sounds.playHeadshot();
+        else sounds.playZombieHit();
+        onHitMarker(isHeadshot);
+        onHitZombie(hitZombieId, hitDamage, isHeadshot);
+
+        onSpawnBloodPool({
+          id: `blood_${Date.now()}_${Math.random()}`,
+          x: hitPos.x,
+          z: hitPos.z,
+          radius: isHeadshot ? 1.4 : 0.9,
+          rotation: Math.random() * Math.PI * 2,
+        });
+      }
+    },
+    [
+      camera,
+      iceWallsRef,
+      playerId,
+      playerName,
+      zombiesRef,
+      onSpawnTracer,
+      onDamageIceWall,
+      onHitMarker,
+      onSpawnBloodPool,
+      realtimeManager,
+      onHitZombie,
+    ]
+  );
+
+  // Shoot / Attack Master Handler
+  const handleShoot = useCallback(() => {
+    if (health <= 0 || isReloading) return;
+
+    // 1. ICEWALL
+    if (currentWeapon === 'ICEWALL') {
+      if (inventory.iceWalls <= 0) return;
+      const yaw = euler.current.y;
+      const spawnDist = 3.2;
+      const wallX = pos.current.x - Math.sin(yaw) * spawnDist;
+      const wallZ = pos.current.z - Math.cos(yaw) * spawnDist;
+      onPlaceIceWall([wallX, 1.3, wallZ], yaw);
+      return;
+    }
+
+    // 2. MEDKIT
+    if (currentWeapon === 'MEDKIT') {
+      onUseMedkit();
+      return;
+    }
+
+    // 3. TACTICAL KNIFE (Melee Slash)
+    if (currentWeapon === 'KNIFE') {
+      sounds.playKnifeSlash();
+      recoilVal.current = 0.12;
+      cameraKick.current = 0.03;
+      setAttackProgress(1);
+      setTimeout(() => setAttackProgress(0), 200);
+
+      // Check melee hit against players & zombies
+      let hitSomeone = false;
+      for (const remotePlayer of Object.values(remotePlayersRef.current || {})) {
+        if (remotePlayer.id === playerId || remotePlayer.health <= 0) continue;
+        const [rX, , rZ] = remotePlayer.transform.position;
+        const dist = Math.hypot(rX - pos.current.x, rZ - pos.current.z);
+        if (dist <= 2.6) {
+          sounds.playZombieHit();
+          onHitMarker(true);
+          realtimeManager?.sendPlayerDamaged(remotePlayer.id, 75, playerName, 'TACTICAL KNIFE', false);
+          hitSomeone = true;
+          break;
+        }
+      }
+      if (!hitSomeone) {
+        const zombies = zombiesRef.current || [];
+        for (const zombie of zombies) {
+          if (zombie.health <= 0) continue;
+          const dist = Math.hypot(zombie.position[0] - pos.current.x, zombie.position[2] - pos.current.z);
+          if (dist <= 2.6) {
+            onHitZombie(zombie.id, 75, true);
+            sounds.playZombieHit();
+            onHitMarker(true);
+            break;
+          }
+        }
+      }
+      return;
+    }
+
+    // 4. UNARMED (Dual Fists Punch Combo)
+    if (currentWeapon === 'UNARMED') {
+      sounds.playPunchSwing();
+      const side = punchSide === 'RIGHT' ? 'LEFT' : 'RIGHT';
+      setPunchSide(side);
+      setAttackProgress(1);
+      setTimeout(() => setAttackProgress(0), 160);
+      recoilVal.current = 0.08;
+      cameraKick.current = 0.02;
+
+      // Check punch hit against players & zombies
+      let punchHit = false;
+      for (const remotePlayer of Object.values(remotePlayersRef.current || {})) {
+        if (remotePlayer.id === playerId || remotePlayer.health <= 0) continue;
+        const [rX, , rZ] = remotePlayer.transform.position;
+        const dist = Math.hypot(rX - pos.current.x, rZ - pos.current.z);
+        if (dist <= 2.2) {
+          sounds.playPunchHit();
+          onHitMarker(false);
+          realtimeManager?.sendPlayerDamaged(remotePlayer.id, 30, playerName, 'FISTS', false);
+          punchHit = true;
+          break;
+        }
+      }
+      if (!punchHit) {
+        const zombies = zombiesRef.current || [];
+        for (const zombie of zombies) {
+          if (zombie.health <= 0) continue;
+          const dist = Math.hypot(zombie.position[0] - pos.current.x, zombie.position[2] - pos.current.z);
+          if (dist <= 2.2) {
+            onHitZombie(zombie.id, 30, false);
+            sounds.playPunchHit();
+            onHitMarker(false);
+            break;
+          }
+        }
+      }
+      return;
+    }
+
+    // 5. FIREARMS (M4A1, PISTOL, SNIPER, SHOTGUN)
+    if (ammo <= 0) {
+      handleReload();
+      return;
+    }
+
+    onAmmoChange(ammo - 1);
+    isShootingRef.current = true;
+    setTimeout(() => {
+      isShootingRef.current = false;
+    }, 70);
+
+    if (currentWeapon === 'SNIPER') {
+      sounds.playSniper();
+      recoilVal.current = 0.26;
+      cameraKick.current = 0.09;
+      executeBulletRaycast(isADS ? 0.0008 : 0.04, 140, 2.7, 'AWM SNIPER');
+    } else if (currentWeapon === 'SHOTGUN') {
+      sounds.playShotgun();
+      recoilVal.current = 0.22;
+      cameraKick.current = 0.07;
+      // Fire 8 buckshot pellets in spread cone
+      for (let p = 0; p < 8; p++) {
+        executeBulletRaycast(isADS ? 0.025 : 0.065, 22, 2.0, 'MOSSBERG 590');
+      }
+    } else if (currentWeapon === 'PISTOL') {
+      sounds.playPistol();
+      recoilVal.current = 0.14;
+      cameraKick.current = 0.05;
+      executeBulletRaycast(isADS ? 0.006 : 0.025, 50, 2.4, '.45 PISTOL');
+    } else {
+      // M4A1 RIFLE
+      sounds.playRifle();
+      recoilVal.current = 0.09;
+      cameraKick.current = 0.035;
+      executeBulletRaycast(isADS ? 0.004 : 0.02, 35, 2.4, 'M4A1');
+    }
+  }, [
+    health,
+    isReloading,
+    currentWeapon,
+    inventory.iceWalls,
+    punchSide,
+    ammo,
+    isADS,
+    handleReload,
+    onPlaceIceWall,
+    onUseMedkit,
+    playerId,
+    playerName,
+    zombiesRef,
+    onHitMarker,
+    realtimeManager,
+    onHitZombie,
+    onAmmoChange,
+    executeBulletRaycast,
+  ]);
+
+  // Controls & Listeners
   useEffect(() => {
     const canvas = gl.domElement;
 
@@ -125,7 +509,7 @@ export function FirstPersonPlayer({
 
     const onMouseMove = (e: MouseEvent) => {
       if (document.pointerLockElement !== canvas) return;
-      const sens = isADS ? 0.0012 : 0.0022; // Slower sensitivity when aiming down sights
+      const sens = isADS ? (currentWeapon === 'SNIPER' ? 0.0006 : 0.0012) : 0.0022;
       euler.current.y -= (e.movementX || 0) * sens;
       euler.current.x -= (e.movementY || 0) * sens;
       euler.current.x = Math.max(-Math.PI / 2.1, Math.min(Math.PI / 2.1, euler.current.x));
@@ -138,34 +522,43 @@ export function FirstPersonPlayer({
       if (e.code === 'KeyD') moveKeys.current.right = true;
       if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') moveKeys.current.sprint = true;
 
-      // [Space] Jump
-      if (e.code === 'Space' && isGrounded.current) {
+      // Jump
+      if (e.code === 'Space' && isGrounded.current && health > 0) {
         velocity.current.y = 5.5;
         isGrounded.current = false;
       }
 
       // [R] Reload
-      if (e.code === 'KeyR' && (currentWeapon === 'RIFLE' || currentWeapon === 'PISTOL') && ammo < maxAmmo && !isReloading) {
+      if (e.code === 'KeyR') {
         handleReload();
       }
 
-      // [1] Switch to M4A1 Rifle (if owned)
+      // [1] Switch to Primary (Sniper / Shotgun / Rifle)
       if (e.code === 'Digit1') {
-        if (inventory.hasRifle) {
+        if (inventory.hasSniper) {
+          onWeaponChange('SNIPER');
+          sounds.playSwitchWeapon();
+        } else if (inventory.hasShotgun) {
+          onWeaponChange('SHOTGUN');
+          sounds.playSwitchWeapon();
+        } else if (inventory.hasRifle) {
           onWeaponChange('RIFLE');
           sounds.playSwitchWeapon();
         }
       }
 
-      // [2] Switch to .45 Thunder Pistol (if owned)
+      // [2] Switch to Secondary (Pistol / Knife)
       if (e.code === 'Digit2') {
         if (inventory.hasPistol) {
           onWeaponChange('PISTOL');
           sounds.playSwitchWeapon();
+        } else if (inventory.hasKnife) {
+          onWeaponChange('KNIFE');
+          sounds.playSwitchWeapon();
         }
       }
 
-      // [3] Switch to IceWall Deployer (if in inventory)
+      // [3] Switch to IceWall
       if (e.code === 'Digit3') {
         if (inventory.iceWalls > 0) {
           onWeaponChange('ICEWALL');
@@ -173,33 +566,38 @@ export function FirstPersonPlayer({
         }
       }
 
-      // [4] Use Military Medkit (if in inventory)
+      // [4] Use Medkit
       if (e.code === 'Digit4') {
         if (inventory.medkits > 0) {
           onUseMedkit();
         }
       }
 
-      // [5] Switch to Unarmed (Bare hands)
+      // [5] Melee (Knife or Fists)
       if (e.code === 'Digit5') {
-        onWeaponChange('UNARMED');
-        sounds.playSwitchWeapon();
+        if (inventory.hasKnife) {
+          onWeaponChange('KNIFE');
+          sounds.playSwitchWeapon();
+        } else {
+          onWeaponChange('UNARMED');
+          sounds.playSwitchWeapon();
+        }
       }
 
-      // [Tab] or [I] In-Game Inventory / Backpack
+      // [Tab] or [I] Toggle Inventory
       if (e.code === 'Tab' || e.code === 'KeyI') {
         e.preventDefault();
         onToggleInventory?.();
       }
 
-      // [E] Hold to loot
-      if (e.code === 'KeyE') {
-        onHoldEChange?.(true);
-      }
-
       // [V] Switch Perspective (FPS / TPS)
       if (e.code === 'KeyV') {
         onPerspectiveChange(perspective === 'FPS' ? 'TPS' : 'FPS');
+      }
+
+      // [E] Hold to Loot
+      if (e.code === 'KeyE') {
+        onHoldEChange?.(true);
       }
     };
 
@@ -218,17 +616,19 @@ export function FirstPersonPlayer({
         return;
       }
       if (e.button === 0) {
-        // Left Click: Shoot / Place / Punch
+        isMouseDownRef.current = true;
         handleShoot();
       } else if (e.button === 2) {
-        // Right Click: Aim Down Sights (ADS)
-        if (currentWeapon === 'RIFLE' || currentWeapon === 'PISTOL') {
+        if (currentWeapon === 'RIFLE' || currentWeapon === 'PISTOL' || currentWeapon === 'SNIPER' || currentWeapon === 'SHOTGUN') {
           setIsADS(true);
         }
       }
     };
 
     const onMouseUp = (e: MouseEvent) => {
+      if (e.button === 0) {
+        isMouseDownRef.current = false;
+      }
       if (e.button === 2) {
         setIsADS(false);
       }
@@ -255,460 +655,159 @@ export function FirstPersonPlayer({
     };
   }, [
     gl.domElement,
-    ammo,
-    maxAmmo,
-    isReloading,
-    currentWeapon,
+    health,
     isADS,
-    perspective,
+    currentWeapon,
     inventory,
+    handleReload,
+    handleShoot,
+    onWeaponChange,
     onUseMedkit,
     onToggleInventory,
-    onHoldEChange,
-    onWeaponChange,
     onPerspectiveChange,
+    perspective,
+    onHoldEChange,
+    setIsLocked,
+    setIsADS,
   ]);
 
-  const handleReload = () => {
-    if (isReloading) return;
-    const isRifle = currentWeapon === 'RIFLE';
-    const isPistol = currentWeapon === 'PISTOL';
-    if (!isRifle && !isPistol) return;
-
-    const needed = maxAmmo - ammo;
-    if (needed <= 0) return;
-
-    const reserve = isRifle ? (inventory.rifleAmmoReserve || 0) : (inventory.pistolAmmoReserve || 0);
-    if (reserve <= 0) {
-      sounds.playEmptyClick();
-      return;
+  // Main Game Loop per frame
+  useFrame((_, delta) => {
+    // 1. FULL-AUTO CONTINUOUS FIRING
+    if (isMouseDownRef.current && currentWeapon === 'RIFLE' && !isReloading && ammo > 0 && health > 0) {
+      const now = Date.now();
+      if (now - lastShotTimeRef.current >= 105) {
+        lastShotTimeRef.current = now;
+        handleShoot();
+      }
     }
 
-    const toLoad = Math.min(needed, reserve);
+    // 2. DEATH CAMERA COLLAPSE ANIMATION
+    if (health <= 0) {
+      if (!deathSoundPlayed.current) {
+        deathSoundPlayed.current = true;
+        sounds.playDeathCollapse();
+      }
+      // Camera collapses down to ground and tilts sideways
+      pos.current.y = THREE.MathUtils.lerp(pos.current.y, 0.28, delta * 5);
+      euler.current.z = THREE.MathUtils.lerp(euler.current.z, 0.75, delta * 4);
+      camera.position.copy(pos.current);
+      camera.rotation.set(euler.current.x, euler.current.y, euler.current.z);
+      return;
+    } else {
+      deathSoundPlayed.current = false;
+      euler.current.z = THREE.MathUtils.lerp(euler.current.z, 0, delta * 10);
+    }
 
-    onReloadStart();
-    sounds.playReload();
-    setTimeout(() => {
-      onConsumeReserveAmmo?.(isRifle ? 'RIFLE' : 'PISTOL', toLoad);
-      onAmmoChange(ammo + toLoad);
-      onReloadEnd();
-    }, 1300);
-  };
+    // 3. Movement Physics & Sprinting
+    const isMoving =
+      moveKeys.current.forward ||
+      moveKeys.current.backward ||
+      moveKeys.current.left ||
+      moveKeys.current.right;
+    const isSprinting = isMoving && moveKeys.current.sprint && stamina > 5 && !isADS;
+    setIsSprintingState(isSprinting);
 
-  const handleShoot = () => {
-    if (health <= 0 || isReloading) return;
+    let speed = isSprinting ? 9.2 : 5.4;
+    if (isADS) speed = currentWeapon === 'SNIPER' ? 2.0 : 3.0;
 
-    // 1. ICEWALL: Deploy ice wall on left click
+    // Drain / Regen Stamina
+    if (isSprinting) {
+      onStaminaChange(Math.max(0, stamina - delta * 22));
+    } else {
+      onStaminaChange(Math.min(100, stamina + delta * 14));
+    }
+
+    const moveVector = new THREE.Vector3();
+    if (moveKeys.current.forward) moveVector.z -= 1;
+    if (moveKeys.current.backward) moveVector.z += 1;
+    if (moveKeys.current.left) moveVector.x -= 1;
+    if (moveKeys.current.right) moveVector.x += 1;
+    moveVector.normalize();
+
+    // Rotate movement by player yaw
+    moveVector.applyAxisAngle(new THREE.Vector3(0, 1, 0), euler.current.y);
+    velocity.current.x = moveVector.x * speed;
+    velocity.current.z = moveVector.z * speed;
+
+    // Gravity
+    velocity.current.y -= 18 * delta;
+    pos.current.y += velocity.current.y * delta;
+    if (pos.current.y <= 1.7) {
+      pos.current.y = 1.7;
+      velocity.current.y = 0;
+      isGrounded.current = true;
+    }
+
+    pos.current.x += velocity.current.x * delta;
+    pos.current.z += velocity.current.z * delta;
+
+    // Map Boundaries
+    pos.current.x = Math.max(-140, Math.min(140, pos.current.x));
+    pos.current.z = Math.max(-140, Math.min(140, pos.current.z));
+
+    playerPosRef.current = [pos.current.x, pos.current.y, pos.current.z];
+
+    // Bobbing timer
+    if (isMoving && isGrounded.current) {
+      bobbingTimer.current += delta * (isSprinting ? 14 : 9);
+    }
+
+    // Smooth Recoil Recovery
+    recoilVal.current = THREE.MathUtils.lerp(recoilVal.current, 0, delta * 15);
+    cameraKick.current = THREE.MathUtils.lerp(cameraKick.current, 0, delta * 12);
+
+    // Apply Camera Transform
+    camera.rotation.set(euler.current.x + cameraKick.current, euler.current.y, euler.current.z);
+
+    if (perspective === 'FPS') {
+      camera.position.copy(pos.current);
+    } else {
+      // TPS Camera (Third-Person behind shoulder)
+      const tpsOffset = new THREE.Vector3(0.5, 0.4, 2.6);
+      tpsOffset.applyEuler(euler.current);
+      camera.position.copy(pos.current).add(tpsOffset);
+    }
+
+    // 4. Dynamic Camera FOV Zoom for ADS & Sprint
+    if ('fov' in camera) {
+      const pCam = camera as THREE.PerspectiveCamera;
+      if (isADS && currentWeapon === 'SNIPER') {
+        pCam.fov = THREE.MathUtils.lerp(pCam.fov, 22, delta * 18); // 4x Optical Zoom!
+        pCam.updateProjectionMatrix();
+      } else if (isADS) {
+        pCam.fov = THREE.MathUtils.lerp(pCam.fov, 55, delta * 18);
+        pCam.updateProjectionMatrix();
+      } else {
+        pCam.fov = THREE.MathUtils.lerp(pCam.fov, isSprinting ? 80 : 75, delta * 10);
+        pCam.updateProjectionMatrix();
+      }
+    }
+
+    // Update IceWall Hologram preview if held
     if (currentWeapon === 'ICEWALL') {
-      if (inventory.iceWalls <= 0) return;
       const yaw = euler.current.y;
       const spawnDist = 3.2;
       const wallX = pos.current.x - Math.sin(yaw) * spawnDist;
       const wallZ = pos.current.z - Math.cos(yaw) * spawnDist;
-      onPlaceIceWall([wallX, 1.3, wallZ], yaw);
-      return;
-    }
-
-    // 2. MEDKIT: Heal on left click
-    if (currentWeapon === 'MEDKIT') {
-      onUseMedkit();
-      return;
-    }
-
-    // 3. UNARMED: Melee punch swing
-    if (currentWeapon === 'UNARMED') {
-      recoilVal.current = 0.08;
-      cameraKick.current = 0.02;
-      isShootingRef.current = true;
-      setTimeout(() => {
-        isShootingRef.current = false;
-      }, 100);
-
-      // Check melee against remote players (PvP punch)
-      for (const remotePlayer of Object.values(remotePlayersRef.current || {})) {
-        if (remotePlayer.id === playerId || remotePlayer.health <= 0) continue;
-        const [rX, rY, rZ] = remotePlayer.transform.position;
-        const dist = Math.hypot(rX - pos.current.x, rZ - pos.current.z);
-        if (dist <= 2.2) {
-          sounds.playZombieHit();
-          onHitMarker(false);
-          realtimeManager?.sendPlayerDamaged(remotePlayer.id, 30, playerName, 'FISTS', false);
-          if (remotePlayer.health <= 30) {
-            realtimeManager?.sendKillFeed({
-              id: `kf_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-              killerName: playerName,
-              victimName: remotePlayer.name,
-              weapon: 'FISTS',
-              isHeadshot: false,
-              isPvP: true,
-              timestamp: Date.now(),
-            });
-          }
-          return;
-        }
-      }
-
-      // Check melee against zombies
-      const zombies = zombiesRef.current || [];
-      for (const zombie of zombies) {
-        if (zombie.health <= 0) continue;
-        const dist = Math.hypot(zombie.position[0] - pos.current.x, zombie.position[2] - pos.current.z);
-        if (dist <= 2.2) {
-          zombie.health = Math.max(0, zombie.health - 30);
-          zombie.state = 'CHASING';
-          if (zombie.health <= 0) {
-            zombiesRef.current = zombiesRef.current.filter((z) => z.id !== zombie.id);
-          }
-          onHitZombie(zombie.id, 30, false);
-          sounds.playZombieHit();
-          onHitMarker(false);
-          realtimeManager?.sendZombieDamaged(zombie.id, 30, playerId);
-          break;
-        }
-      }
-      return;
-    }
-
-    // 4. FIREARMS: RIFLE or PISTOL
-    if (ammo <= 0) {
-      const isRifle = currentWeapon === 'RIFLE';
-      const reserve = isRifle ? (inventory.rifleAmmoReserve || 0) : (inventory.pistolAmmoReserve || 0);
-      if (reserve > 0 && !isReloading) {
-        handleReload();
-      } else {
-        sounds.playEmptyClick();
-      }
-      return;
-    }
-
-    onAmmoChange(ammo - 1);
-
-    // Audio by caliber
-    if (currentWeapon === 'PISTOL') {
-      sounds.playPistol();
-      recoilVal.current = 0.14;
-      cameraKick.current = 0.05;
-    } else {
-      sounds.playRifle();
-      recoilVal.current = 0.09;
-      cameraKick.current = 0.035;
-    }
-
-    isShootingRef.current = true;
-    setTimeout(() => {
-      isShootingRef.current = false;
-    }, 60);
-
-    // Camera Direction & Raycast from actual camera view
-    const rayOrigin = camera.position.clone();
-    const forwardDir = new THREE.Vector3();
-    camera.getWorldDirection(forwardDir);
-
-    // Bullet spread: tighter when ADS
-    const spread = isADS ? 0.004 : 0.02;
-    forwardDir.x += (Math.random() - 0.5) * spread;
-    forwardDir.y += (Math.random() - 0.5) * spread;
-    forwardDir.normalize();
-
-    let hitZombieId: string | undefined;
-    let hitIceWallId: string | undefined;
-    let hitRemotePlayerId: string | undefined;
-    let hitRemotePlayerName: string | undefined;
-    let hitRemotePlayerHp = 0;
-    let hitDamage = currentWeapon === 'PISTOL' ? 50 : 35;
-    let isHeadshot = false;
-    let hitPos = rayOrigin.clone().add(forwardDir.clone().multiplyScalar(75));
-    let closestDist = 75;
-
-    // A. Check bullet intersection against IceWalls (IceWalls block bullets completely!)
-    const iceWalls = iceWallsRef?.current || [];
-    for (const wall of iceWalls) {
-      if (wall.health <= 0) continue;
-      const wX = wall.position[0];
-      const wY = wall.position[1];
-      const wZ = wall.position[2];
-
-      const toWall = new THREE.Vector3(wX - rayOrigin.x, wY - rayOrigin.y, wZ - rayOrigin.z);
-      const proj = toWall.dot(forwardDir);
-
-      if (proj > 0.4 && proj < closestDist) {
-        const rayPoint = rayOrigin.clone().add(forwardDir.clone().multiplyScalar(proj));
-        const localX = (rayPoint.x - wX) * Math.cos(-wall.rotation) - (rayPoint.z - wZ) * Math.sin(-wall.rotation);
-        const localZ = (rayPoint.x - wX) * Math.sin(-wall.rotation) + (rayPoint.z - wZ) * Math.cos(-wall.rotation);
-        const localY = rayPoint.y - wY;
-
-        if (Math.abs(localX) <= 2.2 && Math.abs(localY) <= 1.4 && Math.abs(localZ) <= 0.6) {
-          closestDist = proj;
-          hitIceWallId = wall.id;
-          hitPos = rayPoint;
-        }
-      }
-    }
-
-    // B. Check collision against Remote Players (PvP full gunplay)
-    for (const remotePlayer of Object.values(remotePlayersRef.current || {})) {
-      if (remotePlayer.id === playerId || remotePlayer.health <= 0) continue;
-      const [pX, pY, pZ] = remotePlayer.transform.position;
-      const toPlayer = new THREE.Vector3(pX - rayOrigin.x, (pY - 0.9) - rayOrigin.y, pZ - rayOrigin.z);
-      const proj = toPlayer.dot(forwardDir);
-
-      if (proj > 0.4 && proj < closestDist) {
-        const rayPoint = rayOrigin.clone().add(forwardDir.clone().multiplyScalar(proj));
-        const horizDist = Math.hypot(rayPoint.x - pX, rayPoint.z - pZ);
-
-        if (horizDist < 0.65 && rayPoint.y >= pY - 1.9 && rayPoint.y <= pY + 0.6) {
-          closestDist = proj;
-          hitRemotePlayerId = remotePlayer.id;
-          hitRemotePlayerName = remotePlayer.name;
-          hitRemotePlayerHp = remotePlayer.health;
-          hitZombieId = undefined;
-          hitIceWallId = undefined;
-          hitPos = rayPoint;
-
-          // Headshot if hit upper skull region
-          if (rayPoint.y >= pY - 0.25) {
-            isHeadshot = true;
-            hitDamage = currentWeapon === 'PISTOL' ? 120 : 85;
-          } else {
-            isHeadshot = false;
-            hitDamage = currentWeapon === 'PISTOL' ? 50 : 35;
-          }
-        }
-      }
-    }
-
-    // C. Check collision against zombies if not blocked by closer IceWall or Player
-    const zombies = zombiesRef.current || [];
-    for (const zombie of zombies) {
-      if (zombie.health <= 0) continue;
-      const zX = zombie.position[0];
-      const zZ = zombie.position[2];
-      const zRadius = zombie.type === 'TANK' ? 1.4 : 1.0;
-
-      const toZombie = new THREE.Vector3(zX - rayOrigin.x, 1.0 - rayOrigin.y, zZ - rayOrigin.z);
-      const proj = toZombie.dot(forwardDir);
-
-      if (proj > 0.5 && proj < closestDist) {
-        const rayPoint = rayOrigin.clone().add(forwardDir.clone().multiplyScalar(proj));
-        const horizDist = Math.hypot(rayPoint.x - zX, rayPoint.z - zZ);
-
-        if (horizDist < zRadius && rayPoint.y >= -0.2 && rayPoint.y <= 2.3) {
-          closestDist = proj;
-          hitZombieId = zombie.id;
-          hitRemotePlayerId = undefined;
-          hitIceWallId = undefined;
-          hitPos = rayPoint;
-
-          // Headshot if hit above shoulder line
-          if (rayPoint.y >= 1.45 && horizDist < 0.5) {
-            isHeadshot = true;
-            hitDamage = currentWeapon === 'PISTOL' ? 120 : 85;
-          } else {
-            isHeadshot = false;
-            hitDamage = currentWeapon === 'PISTOL' ? 50 : 35;
-          }
-        }
-      }
-    }
-
-    // Spawn 3D Bullet Tracer from actual gun muzzle tip
-    const muzzleOffset = isADS
-      ? new THREE.Vector3(0, -0.13, -0.65)
-      : new THREE.Vector3(currentWeapon === 'PISTOL' ? 0.22 : 0.25, -0.2, -0.72);
-    const gunMuzzlePos = camera.position.clone().add(muzzleOffset.applyQuaternion(camera.quaternion));
-    onSpawnTracer({
-      id: `tracer_${Date.now()}_${Math.random()}`,
-      start: [gunMuzzlePos.x, gunMuzzlePos.y, gunMuzzlePos.z],
-      end: [hitPos.x, hitPos.y, hitPos.z],
-      life: 1.0,
-    });
-
-    if (hitIceWallId) {
-      // IceWall absorbed the bullet!
-      onDamageIceWall(hitIceWallId, hitDamage);
-      sounds.playIceWallPlace();
-    } else if (hitRemotePlayerId && hitRemotePlayerName) {
-      // PvP Hit on Remote Survivor!
-      if (isHeadshot) {
-        sounds.playHeadshot();
-      } else {
-        sounds.playZombieHit();
-      }
-      onHitMarker(isHeadshot);
-
-      onSpawnBloodPool({
-        id: `blood_${Date.now()}_${Math.random()}`,
-        x: hitPos.x,
-        z: hitPos.z,
-        radius: isHeadshot ? 1.3 : 0.85,
-        rotation: Math.random() * Math.PI * 2,
-      });
-
-      const weaponLabel = currentWeapon === 'PISTOL' ? '.45 PISTOL' : 'M4A1';
-      realtimeManager?.sendPlayerDamaged(hitRemotePlayerId, hitDamage, playerName, weaponLabel, isHeadshot);
-
-      // Fatal PvP KillFeed
-      if (hitRemotePlayerHp <= hitDamage) {
-        realtimeManager?.sendKillFeed({
-          id: `kf_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-          killerName: playerName,
-          victimName: hitRemotePlayerName,
-          weapon: weaponLabel,
-          isHeadshot,
-          isPvP: true,
-          timestamp: Date.now(),
-        });
-      }
-    } else if (hitZombieId) {
-      // 1. Immediately mutate zombiesRef so health is locked down directly
-      const targetZombie = zombies.find((z) => z.id === hitZombieId);
-      if (targetZombie) {
-        targetZombie.health = Math.max(0, targetZombie.health - hitDamage);
-        targetZombie.state = 'CHASING';
-        if (targetZombie.health <= 0) {
-          zombiesRef.current = zombiesRef.current.filter((z) => z.id !== hitZombieId);
-        }
-      }
-
-      // 2. Trigger React state & Kill handler
-      onHitZombie(hitZombieId, hitDamage, isHeadshot);
-
-      if (isHeadshot) {
-        sounds.playHeadshot();
-      } else {
-        sounds.playZombieHit();
-      }
-      onHitMarker(isHeadshot);
-
-      // Spawn blood pool on ground
-      onSpawnBloodPool({
-        id: `blood_${Date.now()}_${Math.random()}`,
-        x: hitPos.x,
-        z: hitPos.z,
-        radius: isHeadshot ? 1.3 : 0.85,
-        rotation: Math.random() * Math.PI * 2,
-      });
-
-      // 3. Broadcast damage to other players
-      realtimeManager?.sendZombieDamaged(hitZombieId, hitDamage, playerId);
-    }
-
-    const shootEvent: ShootEvent = {
-      shooterId: playerId,
-      origin: [pos.current.x, pos.current.y, pos.current.z],
-      direction: [forwardDir.x, forwardDir.y, forwardDir.z],
-      timestamp: Date.now(),
-      hitZombieId,
-      damage: (hitZombieId || hitRemotePlayerId) ? hitDamage : undefined,
-      isHeadshot,
-    };
-
-    onShoot(shootEvent);
-    realtimeManager?.sendShoot(shootEvent);
-  };
-
-  useFrame((_, delta) => {
-    if (health <= 0) return;
-
-    // Stamina & Sprinting System (WarZ fast recovery)
-    let isSprinting = moveKeys.current.sprint && stamina > 5;
-    if (isSprinting) {
-      onStaminaChange(Math.max(0, stamina - delta * 20));
-    } else {
-      onStaminaChange(Math.min(100, stamina + delta * 18));
-    }
-
-    const speed = isSprinting ? 7.8 : isADS ? 2.8 : 4.6;
-    const inputDir = new THREE.Vector3();
-    if (moveKeys.current.forward) inputDir.z -= 1;
-    if (moveKeys.current.backward) inputDir.z += 1;
-    if (moveKeys.current.left) inputDir.x -= 1;
-    if (moveKeys.current.right) inputDir.x += 1;
-    inputDir.normalize();
-
-    const yaw = euler.current.y;
-    const forward = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
-    const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
-    const moveVector = forward.multiplyScalar(-inputDir.z).add(right.multiplyScalar(inputDir.x));
-    moveVector.multiplyScalar(speed * delta);
-
-    pos.current.x += moveVector.x;
-    pos.current.z += moveVector.z;
-
-    // Gravity
-    if (!isGrounded.current) {
-      velocity.current.y -= 15 * delta;
-      pos.current.y += velocity.current.y * delta;
-      if (pos.current.y <= 1.7) {
-        pos.current.y = 1.7;
-        velocity.current.y = 0;
-        isGrounded.current = true;
-      }
-    }
-
-    pos.current.x = Math.max(-145, Math.min(145, pos.current.x));
-    pos.current.z = Math.max(-145, Math.min(145, pos.current.z));
-
-    // Head bobbing
-    const isMoving = inputDir.lengthSq() > 0 && isGrounded.current;
-    let bobOffset = 0;
-    if (isMoving) {
-      bobbingTimer.current += delta * (isSprinting ? 15 : 9);
-      bobOffset = Math.sin(bobbingTimer.current) * 0.05;
-    }
-
-    // Recoil recovery
-    recoilVal.current = THREE.MathUtils.lerp(recoilVal.current, 0, delta * 16);
-    cameraKick.current = THREE.MathUtils.lerp(cameraKick.current, 0, delta * 14);
-
-    // Camera angles
-    const effectivePitch = euler.current.x - cameraKick.current;
-    camera.quaternion.setFromEuler(new THREE.Euler(effectivePitch, euler.current.y, 0, 'YXZ'));
-
-    // Camera FOV transition for ADS zoom
-    const targetFov = isADS ? (currentWeapon === 'RIFLE' ? 52 : 62) : 75;
-    (camera as THREE.PerspectiveCamera).fov = THREE.MathUtils.lerp(
-      (camera as THREE.PerspectiveCamera).fov,
-      targetFov,
-      delta * 14
-    );
-    (camera as THREE.PerspectiveCamera).updateProjectionMatrix();
-
-    // Perspective Positioning
-    if (perspective === 'FPS') {
-      camera.position.set(pos.current.x, pos.current.y + bobOffset, pos.current.z);
-    } else {
-      // Third Person Over-The-Shoulder (WarZ Image 2)
-      const tpsOffset = new THREE.Vector3(0.65, 0.3, 2.4).applyEuler(new THREE.Euler(0, euler.current.y, 0));
-      camera.position.set(pos.current.x + tpsOffset.x, pos.current.y + 0.3 + tpsOffset.y, pos.current.z + tpsOffset.z);
-    }
-
-    // Keep live player position ref updated for zombies so they never attack empty air
-    playerPosRef.current = [pos.current.x, pos.current.y, pos.current.z];
-
-    // Update IceWall placement preview hologram
-    if (currentWeapon === 'ICEWALL') {
-      const yaw = euler.current.y;
-      setPreviewPos([pos.current.x - Math.sin(yaw) * 3.2, 1.3, pos.current.z - Math.cos(yaw) * 3.2]);
+      setPreviewPos([wallX, 1.3, wallZ]);
       setPreviewYaw(yaw);
     }
 
-    // Lock gun directly to camera in first-person so it NEVER floats away in mid-air
-    if (gunHolderRef.current) {
-      gunHolderRef.current.position.copy(camera.position);
-      gunHolderRef.current.quaternion.copy(camera.quaternion);
-    }
-
-    // Network position broadcast
+    // Broadcast network transform to teammates
     realtimeManager?.sendPosition({
       id: playerId,
       name: playerName,
       transform: {
         position: [pos.current.x, pos.current.y, pos.current.z],
-        rotation: [euler.current.x, euler.current.y, 0],
+        rotation: [euler.current.x, euler.current.y, euler.current.z],
         isMoving,
         isShooting: isShootingRef.current,
         currentWeapon,
+        isSprinting,
+        isReloading,
+        isPunching: currentWeapon === 'UNARMED' && attackProgress > 0,
+        isSlashing: currentWeapon === 'KNIFE' && attackProgress > 0,
       },
       health,
       maxHealth: 100,
@@ -720,26 +819,40 @@ export function FirstPersonPlayer({
 
   return (
     <>
-      {/* FPS: Weapon Model locked to camera */}
+      {/* FPS 3D Weapon Model */}
       {perspective === 'FPS' && (
-        <group ref={gunHolderRef}>
+        <group position={pos.current.toArray()} rotation={[euler.current.x, euler.current.y, euler.current.z]}>
           <WeaponModel
             weaponType={currentWeapon}
             isADS={isADS}
             isShooting={isShootingRef.current}
+            isReloading={isReloading}
+            isSprinting={isSprintingState}
             recoil={recoilVal.current}
             bobOffset={bobbingTimer.current}
+            attackProgress={attackProgress}
+            punchSide={punchSide}
           />
         </group>
       )}
 
-      {/* TPS: Full Survivor Avatar with backpack and helmet */}
+      {/* TPS 3D Player Mesh */}
       {perspective === 'TPS' && (
-        <group position={[pos.current.x, 0, pos.current.z]} rotation={[0, euler.current.y, 0]}>
+        <group position={[pos.current.x, pos.current.y - 1.7, pos.current.z]} rotation={[0, euler.current.y, 0]}>
           <SurvivorAvatar
             currentWeapon={currentWeapon}
             isShooting={isShootingRef.current}
-            isMoving={moveKeys.current.forward || moveKeys.current.backward}
+            isMoving={
+              moveKeys.current.forward ||
+              moveKeys.current.backward ||
+              moveKeys.current.left ||
+              moveKeys.current.right
+            }
+            isSprinting={isSprintingState}
+            isReloading={isReloading}
+            isPunching={currentWeapon === 'UNARMED' && attackProgress > 0}
+            isSlashing={currentWeapon === 'KNIFE' && attackProgress > 0}
+            isDead={health <= 0}
           />
         </group>
       )}

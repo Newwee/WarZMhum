@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { StashItem, PlayerLoadout, ItemCategory, PlayerInventory } from '@/types/game';
+import { StashItem, PlayerLoadout, ItemCategory, PlayerInventory, WeaponType } from '@/types/game';
 import {
   CATALOG_ITEMS,
   createStashItem,
@@ -35,11 +35,39 @@ interface WarZInventoryModalProps {
   stash?: StashItem[];
   onUpdateLoadoutAndStash?: (newMoney: number, newLoadout: PlayerLoadout, newStash: StashItem[]) => void;
   mode?: 'LOBBY' | 'IN_GAME';
-  onEquipInGameWeapon?: (weaponKey: 'RIFLE' | 'PISTOL' | 'ICEWALL' | 'MEDKIT' | 'UNARMED') => void;
+  onEquipInGameWeapon?: (weaponKey: WeaponType) => void;
 }
 
 // Custom Tactical SVG Icon Renderer
 function renderTacticalIcon(itemKey: string, category: string, className = 'w-6 h-6') {
+  if (itemKey === 'SNIPER') {
+    return (
+      <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M2 13h4l2-3h7l1 2h6v2h-2v2h-3l-1-2H9l-2 3H3z" />
+        <circle cx="12" cy="7" r="3" />
+        <line x1="12" y1="2" x2="12" y2="4" />
+        <line x1="22" y1="14" x2="24" y2="14" />
+      </svg>
+    );
+  }
+  if (itemKey === 'SHOTGUN') {
+    return (
+      <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="2" y="11" width="18" height="3" rx="1" />
+        <path d="M6 14v3h3l1-3" />
+        <path d="M11 14h4v2h-4z" />
+        <line x1="20" y1="12.5" x2="23" y2="12.5" />
+      </svg>
+    );
+  }
+  if (itemKey === 'KNIFE') {
+    return (
+      <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 21l3-3m0 0l2 2 13-13a2 2 0 0 0-3-3L5 17l2 2z" />
+        <line x1="7" y1="15" x2="9" y2="17" />
+      </svg>
+    );
+  }
   if (itemKey === 'M4A1' || (category === 'WEAPONS' && itemKey.includes('M4'))) {
     return (
       <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -201,13 +229,17 @@ export function WarZInventoryModal({
       newLoadout.rifleAmmoReserve = (newLoadout.rifleAmmoReserve || 0) + (item.count || 30);
     } else if (item.key === 'AMMO_45') {
       newLoadout.pistolAmmoReserve = (newLoadout.pistolAmmoReserve || 0) + (item.count || 12);
-    } else if (slotNum === 1) {
+    } else if (item.key === 'AMMO_SNIPER') {
+      newLoadout.sniperAmmoReserve = (newLoadout.sniperAmmoReserve || 0) + (item.count || 10);
+    } else if (item.key === 'AMMO_SHOTGUN') {
+      newLoadout.shotgunAmmoReserve = (newLoadout.shotgunAmmoReserve || 0) + (item.count || 16);
+    } else if (slotNum === 1 || item.key === 'M4A1' || item.key === 'SNIPER' || item.key === 'SHOTGUN') {
       if (newLoadout.slot1) newStash.push(newLoadout.slot1);
       newLoadout.slot1 = { ...item };
-    } else if (slotNum === 2) {
+    } else if (slotNum === 2 || (item.key === 'PISTOL' && !newLoadout.slot2)) {
       if (newLoadout.slot2) newStash.push(newLoadout.slot2);
       newLoadout.slot2 = { ...item };
-    } else if (slotNum === 3) {
+    } else if (slotNum === 3 || item.key === 'ICEWALL') {
       // Slot 3 (Utility / IceWall): Unlimited Stacking
       if (newLoadout.slot3 && newLoadout.slot3.key === item.key) {
         newLoadout.slot3 = {
@@ -218,7 +250,7 @@ export function WarZInventoryModal({
         if (newLoadout.slot3) newStash.push(newLoadout.slot3);
         newLoadout.slot3 = { ...item };
       }
-    } else if (slotNum === 4) {
+    } else if (slotNum === 4 || item.key === 'MEDKIT') {
       // Slot 4 (Medical / Medkit): Unlimited Stacking
       if (newLoadout.slot4 && newLoadout.slot4.key === item.key) {
         newLoadout.slot4 = {
@@ -229,8 +261,8 @@ export function WarZInventoryModal({
         if (newLoadout.slot4) newStash.push(newLoadout.slot4);
         newLoadout.slot4 = { ...item };
       }
-    } else if (slotNum === 5) {
-      // Slot 5 (Misc): Unlimited Stacking if matching key
+    } else if (slotNum === 5 || item.key === 'KNIFE') {
+      // Slot 5 (Melee / Knife / Misc): Unlimited Stacking if matching key
       if (newLoadout.slot5 && newLoadout.slot5.key === item.key) {
         newLoadout.slot5 = {
           ...newLoadout.slot5,
@@ -314,6 +346,12 @@ export function WarZInventoryModal({
     if (loadout.pistolAmmoReserve > 0) {
       newStash.push(createStashItem('AMMO_45', loadout.pistolAmmoReserve));
     }
+    if (loadout.sniperAmmoReserve > 0) {
+      newStash.push(createStashItem('AMMO_SNIPER', loadout.sniperAmmoReserve));
+    }
+    if (loadout.shotgunAmmoReserve > 0) {
+      newStash.push(createStashItem('AMMO_SHOTGUN', loadout.shotgunAmmoReserve));
+    }
 
     for (const b of loadout.backpack) {
       newStash.push(b);
@@ -329,6 +367,8 @@ export function WarZInventoryModal({
       slot5: null,
       rifleAmmoReserve: 0,
       pistolAmmoReserve: 0,
+      sniperAmmoReserve: 0,
+      shotgunAmmoReserve: 0,
       backpack: [],
     };
 
@@ -337,7 +377,7 @@ export function WarZInventoryModal({
   };
 
   // Buy Item from Stash Marketplace (AUTO-MERGE INTO EXISTING STASH STACK)
-  const handleBuy = (catalogKey: 'M4A1' | 'PISTOL' | 'AMMO_556' | 'AMMO_45' | 'ICEWALL' | 'MEDKIT', cost: number) => {
+  const handleBuy = (catalogKey: StashItem['key'], cost: number) => {
     if (money < cost) {
       sounds.playBuyError();
       return;
@@ -457,8 +497,12 @@ export function WarZInventoryModal({
                   onDragOver={handleDragOver}
                   onDrop={(e) => handleDropOnSlot(e, 1)}
                   onClick={() => {
-                    if (mode === 'IN_GAME' && loadout.slot1) onEquipInGameWeapon?.('RIFLE');
-                    else unequipSlot(1);
+                    if (mode === 'IN_GAME' && loadout.slot1) {
+                      const wType: WeaponType = loadout.slot1.key === 'SNIPER' ? 'SNIPER' : loadout.slot1.key === 'SHOTGUN' ? 'SHOTGUN' : 'RIFLE';
+                      onEquipInGameWeapon?.(wType);
+                    } else {
+                      unequipSlot(1);
+                    }
                   }}
                   className={`h-32 rounded-xl border-2 flex flex-col justify-between p-3 transition-all cursor-pointer relative overflow-hidden group ${
                     loadout.slot1
@@ -479,14 +523,16 @@ export function WarZInventoryModal({
                     <div className="z-10 mt-1">
                       <div className="flex items-center gap-2 text-red-400 mb-1">
                         {renderTacticalIcon(loadout.slot1.key, 'WEAPONS', 'w-6 h-6 text-red-400')}
-                        <span className="text-xs font-mono font-bold text-zinc-400 uppercase tracking-tighter">5.56 NATO</span>
+                        <span className="text-xs font-mono font-bold text-zinc-400 uppercase tracking-tighter">
+                          {loadout.slot1.key === 'SNIPER' ? '.338 LAPUA' : loadout.slot1.key === 'SHOTGUN' ? '12-GAUGE BUCK' : '5.56 NATO'}
+                        </span>
                       </div>
                       <div className="text-sm font-black font-mono text-white truncate drop-shadow">
                         {loadout.slot1.name}
                       </div>
                       <div className="mt-1 flex items-center justify-between">
                         <span className="text-[10px] font-mono font-black text-red-400 bg-red-950/80 px-2 py-0.5 rounded border border-red-700/50">
-                          RESERVE: {loadout.rifleAmmoReserve || 0} RNDS
+                          RESERVE: {loadout.slot1.key === 'SNIPER' ? (loadout.sniperAmmoReserve || 0) : loadout.slot1.key === 'SHOTGUN' ? (loadout.shotgunAmmoReserve || 0) : (loadout.rifleAmmoReserve || 0)} RNDS
                         </span>
                       </div>
                     </div>
@@ -503,8 +549,12 @@ export function WarZInventoryModal({
                   onDragOver={handleDragOver}
                   onDrop={(e) => handleDropOnSlot(e, 2)}
                   onClick={() => {
-                    if (mode === 'IN_GAME' && loadout.slot2) onEquipInGameWeapon?.('PISTOL');
-                    else unequipSlot(2);
+                    if (mode === 'IN_GAME' && loadout.slot2) {
+                      const wType: WeaponType = loadout.slot2.key === 'KNIFE' ? 'KNIFE' : 'PISTOL';
+                      onEquipInGameWeapon?.(wType);
+                    } else {
+                      unequipSlot(2);
+                    }
                   }}
                   className={`h-32 rounded-xl border-2 flex flex-col justify-between p-3 transition-all cursor-pointer relative overflow-hidden group ${
                     loadout.slot2
@@ -525,14 +575,16 @@ export function WarZInventoryModal({
                     <div className="z-10 mt-1">
                       <div className="flex items-center gap-2 text-amber-400 mb-1">
                         {renderTacticalIcon(loadout.slot2.key, 'WEAPONS', 'w-6 h-6 text-amber-400')}
-                        <span className="text-xs font-mono font-bold text-zinc-400 uppercase tracking-tighter">.45 ACP</span>
+                        <span className="text-xs font-mono font-bold text-zinc-400 uppercase tracking-tighter">
+                          {loadout.slot2.key === 'KNIFE' ? 'COMBAT BLADE' : '.45 ACP'}
+                        </span>
                       </div>
                       <div className="text-sm font-black font-mono text-white truncate drop-shadow">
                         {loadout.slot2.name}
                       </div>
                       <div className="mt-1 flex items-center justify-between">
                         <span className="text-[10px] font-mono font-black text-amber-400 bg-amber-950/80 px-2 py-0.5 rounded border border-amber-700/50">
-                          RESERVE: {loadout.pistolAmmoReserve || 0} RNDS
+                          {loadout.slot2.key === 'KNIFE' ? 'SILENT MELEE' : `RESERVE: ${loadout.pistolAmmoReserve || 0} RNDS`}
                         </span>
                       </div>
                     </div>
@@ -700,13 +752,21 @@ export function WarZInventoryModal({
 
               {/* Reserve Ammo Pocket Badges */}
               <div className="grid grid-cols-2 gap-2 text-xs font-mono">
-                <div className="p-2.5 rounded-xl bg-zinc-900/90 border border-red-700/40 flex justify-between items-center">
-                  <span className="text-zinc-400 text-[11px] font-bold">5.56mm Ammo:</span>
-                  <span className="font-black text-red-400 text-sm">{loadout.rifleAmmoReserve || 0} Rnds</span>
+                <div className="p-2 rounded-xl bg-zinc-900/90 border border-red-700/40 flex justify-between items-center">
+                  <span className="text-zinc-400 text-[10px] font-bold">5.56mm NATO:</span>
+                  <span className="font-black text-red-400 text-xs">{loadout.rifleAmmoReserve || 0} Rnds</span>
                 </div>
-                <div className="p-2.5 rounded-xl bg-zinc-900/90 border border-amber-700/40 flex justify-between items-center">
-                  <span className="text-zinc-400 text-[11px] font-bold">.45 ACP Ammo:</span>
-                  <span className="font-black text-amber-400 text-sm">{loadout.pistolAmmoReserve || 0} Rnds</span>
+                <div className="p-2 rounded-xl bg-zinc-900/90 border border-amber-700/40 flex justify-between items-center">
+                  <span className="text-zinc-400 text-[10px] font-bold">.45 ACP:</span>
+                  <span className="font-black text-amber-400 text-xs">{loadout.pistolAmmoReserve || 0} Rnds</span>
+                </div>
+                <div className="p-2 rounded-xl bg-zinc-900/90 border border-emerald-700/40 flex justify-between items-center">
+                  <span className="text-zinc-400 text-[10px] font-bold">.338 Lapua:</span>
+                  <span className="font-black text-emerald-400 text-xs">{loadout.sniperAmmoReserve || 0} Rnds</span>
+                </div>
+                <div className="p-2 rounded-xl bg-zinc-900/90 border border-orange-700/40 flex justify-between items-center">
+                  <span className="text-zinc-400 text-[10px] font-bold">12-Ga Buck:</span>
+                  <span className="font-black text-orange-400 text-xs">{loadout.shotgunAmmoReserve || 0} Rnds</span>
                 </div>
               </div>
 

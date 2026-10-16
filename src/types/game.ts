@@ -28,6 +28,10 @@ export interface PlayerTransform {
   isMoving: boolean;
   isShooting: boolean;
   currentWeapon: string;
+  isSprinting?: boolean;
+  isReloading?: boolean;
+  isPunching?: boolean;
+  isSlashing?: boolean;
 }
 
 export interface PlayerNetState {
@@ -93,12 +97,12 @@ export interface MatchSummary {
   players: PlayerSummary[];
 }
 
-export type WeaponType = 'UNARMED' | 'RIFLE' | 'PISTOL' | 'ICEWALL' | 'MEDKIT';
+export type WeaponType = 'UNARMED' | 'KNIFE' | 'PISTOL' | 'SHOTGUN' | 'RIFLE' | 'SNIPER' | 'ICEWALL' | 'MEDKIT';
 export type ItemCategory = 'ALL' | 'WEAPONS' | 'AMMO' | 'MEDICAL' | 'UTILITY';
 
 export interface StashItem {
   id: string;
-  key: 'M4A1' | 'PISTOL' | 'AMMO_556' | 'AMMO_45' | 'ICEWALL' | 'MEDKIT';
+  key: 'M4A1' | 'SNIPER' | 'SHOTGUN' | 'PISTOL' | 'KNIFE' | 'AMMO_556' | 'AMMO_45' | 'AMMO_SNIPER' | 'AMMO_SHOTGUN' | 'ICEWALL' | 'MEDKIT';
   name: string;
   category: ItemCategory;
   count: number;
@@ -110,13 +114,15 @@ export interface StashItem {
 }
 
 export interface PlayerLoadout {
-  slot1: StashItem | null; // Primary Weapon (M4A1)
-  slot2: StashItem | null; // Secondary Weapon (.45 Pistol)
+  slot1: StashItem | null; // Primary Weapon (M4A1 / Sniper / Shotgun)
+  slot2: StashItem | null; // Secondary Weapon (.45 Pistol / Knife)
   slot3: StashItem | null; // Utility (IceWall)
   slot4: StashItem | null; // Heal (Medkit)
-  slot5: StashItem | null; // Misc / Other
+  slot5: StashItem | null; // Melee / Misc (Knife / Fists)
   rifleAmmoReserve: number; // 5.56mm reserve rounds brought into raid
   pistolAmmoReserve: number; // .45 ACP reserve rounds brought into raid
+  sniperAmmoReserve: number; // .338 Lapua reserve rounds brought into raid
+  shotgunAmmoReserve: number; // 12-Gauge reserve shells brought into raid
   backpack: StashItem[]; // Extra items in military ruck
 }
 
@@ -139,6 +145,13 @@ export interface PlayerInventory {
   hasPistol: boolean;
   pistolAmmo: number;
   pistolAmmoReserve: number;
+  hasSniper: boolean;
+  sniperAmmo: number;
+  sniperAmmoReserve: number;
+  hasShotgun: boolean;
+  shotgunAmmo: number;
+  shotgunAmmoReserve: number;
+  hasKnife: boolean;
   iceWalls: number;
   medkits: number;
   loadout?: PlayerLoadout;

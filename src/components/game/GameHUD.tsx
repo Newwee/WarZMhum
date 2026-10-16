@@ -183,18 +183,82 @@ export function GameHUD({
         </div>
       </div>
 
+      {/* SNIPER OPTIC SCOPE OVERLAY (When ADS with Sniper) */}
+      {isADS && currentWeapon === 'SNIPER' && (
+        <div className="fixed inset-0 pointer-events-none z-40 flex items-center justify-center select-none overflow-hidden">
+          {/* Black Vignette Mask outside optic lens */}
+          <div className="absolute inset-0 bg-black/95 shadow-[inset_0_0_120px_black]" />
+
+          {/* Circular Sniper Lens Aperture */}
+          <div className="relative w-[85vh] h-[85vh] max-w-[700px] max-h-[700px] rounded-full border-4 border-zinc-800 shadow-[0_0_80px_rgba(0,0,0,1)] flex items-center justify-center overflow-hidden bg-transparent">
+            {/* Inner Lens Reflection Tint */}
+            <div className="absolute inset-0 rounded-full border border-cyan-500/20 shadow-[inset_0_0_40px_rgba(6,182,212,0.15)]" />
+
+            {/* Crosshair Horizontal Line */}
+            <div className="absolute w-full h-[1.5px] bg-red-600/90 shadow-[0_0_4px_red]" />
+            {/* Crosshair Vertical Line */}
+            <div className="absolute h-full w-[1.5px] bg-red-600/90 shadow-[0_0_4px_red]" />
+
+            {/* Mil-dot ticks */}
+            {[-120, -80, -40, 40, 80, 120].map((offset) => (
+              <React.Fragment key={offset}>
+                <div
+                  className="absolute w-2.5 h-[1.5px] bg-red-500"
+                  style={{ transform: `translateY(${offset}px)` }}
+                />
+                <div
+                  className="absolute h-2.5 w-[1.5px] bg-red-500"
+                  style={{ transform: `translateX(${offset}px)` }}
+                />
+              </React.Fragment>
+            ))}
+
+            {/* Center Aim Dot */}
+            <div className="w-1.5 h-1.5 rounded-full bg-red-500 shadow-[0_0_8px_#ef4444] z-10" />
+
+            {/* Tactical Scope Telemetry */}
+            <div className="absolute top-12 font-mono text-[11px] text-red-500/80 tracking-widest font-black">
+              AWM &bull; 4X OPTIC &bull; 800M
+            </div>
+            <div className="absolute bottom-12 font-mono text-[10px] text-cyan-400/80 tracking-wider">
+              ELEV: +0.25 &bull; WIND: 0.0 &bull; READY
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* CENTER SCREEN: Dynamic Reticle & Hitmarkers */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
         <div className="relative flex items-center justify-center">
-          {/* Crosshair (hides when ADS for realistic iron sights) */}
+          {/* Crosshairs when not ADS */}
           {!isADS && (
-            <div className="relative w-8 h-8 flex items-center justify-center">
-              <div className="w-1 h-1 bg-white rounded-full shadow-[0_0_6px_#ffffff]" />
-              <div className="absolute w-4 h-[1.5px] bg-white/80 -left-4" />
-              <div className="absolute w-4 h-[1.5px] bg-white/80 -right-4" />
-              <div className="absolute h-4 w-[1.5px] bg-white/80 -top-4" />
-              <div className="absolute h-4 w-[1.5px] bg-white/80 -bottom-4" />
-            </div>
+            <>
+              {/* Shotgun Spread Circle Reticle */}
+              {currentWeapon === 'SHOTGUN' && (
+                <div className="relative w-12 h-12 flex items-center justify-center">
+                  <div className="w-10 h-10 rounded-full border border-white/70" />
+                  <div className="w-1 h-1 bg-white rounded-full" />
+                </div>
+              )}
+
+              {/* Melee Knife / Fists Center Aim Dot */}
+              {(currentWeapon === 'KNIFE' || currentWeapon === 'UNARMED') && (
+                <div className="relative w-4 h-4 flex items-center justify-center">
+                  <div className="w-1.5 h-1.5 bg-amber-400 rounded-full shadow-[0_0_6px_#f59e0b]" />
+                </div>
+              )}
+
+              {/* Standard Firearm Crosshair */}
+              {(currentWeapon === 'RIFLE' || currentWeapon === 'PISTOL' || currentWeapon === 'SNIPER' || currentWeapon === 'ICEWALL' || currentWeapon === 'MEDKIT') && (
+                <div className="relative w-8 h-8 flex items-center justify-center">
+                  <div className="w-1 h-1 bg-white rounded-full shadow-[0_0_6px_#ffffff]" />
+                  <div className="absolute w-4 h-[1.5px] bg-white/80 -left-4" />
+                  <div className="absolute w-4 h-[1.5px] bg-white/80 -right-4" />
+                  <div className="absolute h-4 w-[1.5px] bg-white/80 -top-4" />
+                  <div className="absolute h-4 w-[1.5px] bg-white/80 -bottom-4" />
+                </div>
+              )}
+            </>
           )}
 
           {/* Hitmarker Confirmation */}
@@ -387,22 +451,38 @@ export function GameHUD({
 
         {/* 2. BOTTOM-CENTER: WarZ Quick Hotbar */}
         <div className="hidden sm:flex items-center gap-1.5 bg-black/85 backdrop-blur-md border border-zinc-800/80 px-3 py-2 rounded-xl pointer-events-auto">
-          {/* Slot 1: Primary Rifle */}
-          <button
-            onClick={() => inventory.hasRifle && onSelectSlot('RIFLE')}
-            disabled={!inventory.hasRifle}
-            className={`px-3 py-1.5 rounded-lg font-mono text-xs font-bold border transition-all cursor-pointer ${
-              currentWeapon === 'RIFLE'
-                ? 'bg-red-950/90 border-red-500 text-white shadow-md'
-                : inventory.hasRifle
-                ? 'bg-zinc-900/80 border-zinc-700 text-zinc-300 hover:text-white'
-                : 'bg-zinc-950/60 border-zinc-900 text-zinc-600 cursor-not-allowed'
-            }`}
-          >
-            [1] M4A1 {inventory.hasRifle ? '' : '🔒'}
-          </button>
+          {/* Slot 1: Primary Weapon (Sniper / Shotgun / Rifle) */}
+          {(() => {
+            const hasPrimary = inventory.hasSniper || inventory.hasShotgun || inventory.hasRifle;
+            const primaryWeaponType: WeaponType = inventory.hasSniper
+              ? 'SNIPER'
+              : inventory.hasShotgun
+              ? 'SHOTGUN'
+              : 'RIFLE';
+            const primaryName = inventory.hasSniper
+              ? 'AWM SNIPER'
+              : inventory.hasShotgun
+              ? 'MOSSBERG'
+              : 'M4A1 RIFLE';
 
-          {/* Slot 2: Secondary Pistol */}
+            return (
+              <button
+                onClick={() => hasPrimary && onSelectSlot(primaryWeaponType)}
+                disabled={!hasPrimary}
+                className={`px-3 py-1.5 rounded-lg font-mono text-xs font-bold border transition-all cursor-pointer ${
+                  currentWeapon === primaryWeaponType
+                    ? 'bg-red-950/90 border-red-500 text-white shadow-md'
+                    : hasPrimary
+                    ? 'bg-zinc-900/80 border-zinc-700 text-zinc-300 hover:text-white'
+                    : 'bg-zinc-950/60 border-zinc-900 text-zinc-600 cursor-not-allowed'
+                }`}
+              >
+                [1] {primaryName} {hasPrimary ? '' : '🔒'}
+              </button>
+            );
+          })()}
+
+          {/* Slot 2: Secondary Sidearm */}
           <button
             onClick={() => inventory.hasPistol && onSelectSlot('PISTOL')}
             disabled={!inventory.hasPistol}
@@ -447,16 +527,16 @@ export function GameHUD({
             [4] MEDKIT ({inventory.medkits})
           </button>
 
-          {/* Slot 5: Unarmed */}
+          {/* Slot 5: Melee (Knife or Fists) */}
           <button
-            onClick={() => onSelectSlot('UNARMED')}
+            onClick={() => onSelectSlot(inventory.hasKnife ? 'KNIFE' : 'UNARMED')}
             className={`px-3 py-1.5 rounded-lg font-mono text-xs font-bold border transition-all cursor-pointer ${
-              currentWeapon === 'UNARMED'
-                ? 'bg-zinc-800 border-zinc-400 text-white'
+              currentWeapon === 'KNIFE' || currentWeapon === 'UNARMED'
+                ? 'bg-zinc-800 border-amber-400 text-amber-300 shadow-md'
                 : 'bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:text-white'
             }`}
           >
-            [5] UNARMED
+            [5] {inventory.hasKnife ? 'KNIFE' : 'FISTS'}
           </button>
 
           {/* [TAB] In-Game Backpack */}
@@ -469,17 +549,31 @@ export function GameHUD({
         </div>
 
         {/* 3. BOTTOM-RIGHT: WarZ Weapon & Ammo Counter */}
-        <div className="bg-black/85 backdrop-blur-md border border-zinc-800/80 p-3.5 rounded-xl min-w-[200px] text-right">
+        <div className="bg-black/85 backdrop-blur-md border border-zinc-800/80 p-3.5 rounded-xl min-w-[210px] text-right">
           {currentWeapon === 'UNARMED' && (
             <>
               <div className="text-[10px] font-mono text-zinc-400 font-bold uppercase tracking-wider mb-0.5">
-                BARE HANDS // UNARMED
+                BARE FISTS // MELEE
               </div>
-              <div className="text-3xl font-black font-mono text-zinc-300">
-                FISTS
+              <div className="text-3xl font-black font-mono text-zinc-200">
+                PUNCH
               </div>
               <div className="text-[10px] font-mono text-amber-400 mt-1">
-                [L-CLICK] MELEE PUNCH
+                [L-CLICK] ALTERNATING JAB COMBO
+              </div>
+            </>
+          )}
+
+          {currentWeapon === 'KNIFE' && (
+            <>
+              <div className="text-[10px] font-mono text-amber-400 font-bold uppercase tracking-wider mb-0.5">
+                TACTICAL COMBAT KNIFE
+              </div>
+              <div className="text-3xl font-black font-mono text-amber-300">
+                SLASH
+              </div>
+              <div className="text-[10px] font-mono text-amber-400/80 mt-1">
+                [L-CLICK] 75 DMG &bull; SILENT KILL
               </div>
             </>
           )}
@@ -507,28 +601,41 @@ export function GameHUD({
                 x{inventory.medkits}
               </div>
               <div className="text-[10px] font-mono text-emerald-400/80 mt-1">
-                [L-CLICK] OR [4] INJECT (+50 HP)
+                [L-CLICK] OR [4] INJECT (+60 HP)
               </div>
             </>
           )}
 
-          {(currentWeapon === 'RIFLE' || currentWeapon === 'PISTOL') && (
+          {(currentWeapon === 'RIFLE' || currentWeapon === 'PISTOL' || currentWeapon === 'SNIPER' || currentWeapon === 'SHOTGUN') && (
             <>
               <div className="text-[10px] font-mono text-zinc-400 font-bold uppercase tracking-wider mb-0.5">
-                {currentWeapon === 'PISTOL' ? '.45 Thunder Revolver' : 'M4A1 Assault Rifle'}
+                {currentWeapon === 'SNIPER'
+                  ? 'AWM Tactical Sniper (.338)'
+                  : currentWeapon === 'SHOTGUN'
+                  ? 'Mossberg 590 Shotgun (12G)'
+                  : currentWeapon === 'PISTOL'
+                  ? '.45 Thunder Revolver (.45 ACP)'
+                  : 'M4A1 Assault Rifle (5.56mm)'}
               </div>
 
               <div className="flex items-baseline justify-end gap-1.5 font-mono">
                 <span
                   className={`text-4xl font-black tracking-tight ${
-                    ammo < 5 ? 'text-red-500 animate-pulse' : 'text-zinc-100'
+                    ammo < 3 ? 'text-red-500 animate-pulse' : 'text-zinc-100'
                   }`}
                 >
                   {isReloading ? '--' : ammo}
                 </span>
                 <span className="text-zinc-500 font-bold text-sm">/ {maxAmmo}</span>
                 <span className="text-emerald-400 font-bold text-xs ml-1 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-500/40">
-                  +{currentWeapon === 'RIFLE' ? (inventory.rifleAmmoReserve || 0) : (inventory.pistolAmmoReserve || 0)}
+                  +
+                  {currentWeapon === 'SNIPER'
+                    ? (inventory.sniperAmmoReserve || 0)
+                    : currentWeapon === 'SHOTGUN'
+                    ? (inventory.shotgunAmmoReserve || 0)
+                    : currentWeapon === 'RIFLE'
+                    ? (inventory.rifleAmmoReserve || 0)
+                    : (inventory.pistolAmmoReserve || 0)}
                 </span>
               </div>
 
@@ -539,7 +646,7 @@ export function GameHUD({
                 </div>
               ) : (
                 <div className="text-[10px] font-mono text-zinc-500 mt-1">
-                  [L-CLICK] FIRE &bull; [R-CLICK] ADS &bull; [R] RELOAD
+                  {currentWeapon === 'RIFLE' ? '[HOLD L-CLICK] FULL AUTO' : '[L-CLICK] FIRE'} &bull; [R-CLICK] ADS &bull; [R] RELOAD
                 </div>
               )}
             </>
