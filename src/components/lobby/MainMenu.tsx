@@ -12,13 +12,20 @@ interface MainMenuProps {
   onJoinRoom: (roomCode: string, playerName: string) => void;
   inventory: PlayerInventory;
   onInventoryChange: (inv: PlayerInventory) => void;
+  initialRoomCode?: string;
 }
 
-export function MainMenu({ onPlayPublic, onCreateRoom, onJoinRoom, inventory, onInventoryChange }: MainMenuProps) {
+export function MainMenu({ onPlayPublic, onCreateRoom, onJoinRoom, inventory, onInventoryChange, initialRoomCode }: MainMenuProps) {
   const [playerName, setPlayerName] = useState('Survivor');
-  const [roomCodeInput, setRoomCodeInput] = useState('');
+  const [roomCodeInput, setRoomCodeInput] = useState(initialRoomCode || '');
   const [errorMsg, setErrorMsg] = useState('');
   const [isShopOpen, setIsShopOpen] = useState(false);
+
+  useEffect(() => {
+    if (initialRoomCode) {
+      setRoomCodeInput(initialRoomCode.toUpperCase());
+    }
+  }, [initialRoomCode]);
 
   useEffect(() => {
     const savedName = localStorage.getItem('warz_player_name');
@@ -171,6 +178,28 @@ export function MainMenu({ onPlayPublic, onCreateRoom, onJoinRoom, inventory, on
           {errorMsg && (
             <div className="p-3 rounded-lg bg-red-950/50 border border-red-600/50 text-red-400 text-xs font-mono">
               {errorMsg}
+            </div>
+          )}
+
+          {initialRoomCode && (
+            <div className="p-4 rounded-xl bg-gradient-to-r from-emerald-950 via-zinc-900 to-black border-2 border-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.4)] flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <Radio className="w-5 h-5 text-emerald-400 animate-pulse" />
+                <div>
+                  <span className="text-[10px] font-mono text-emerald-400 font-bold uppercase tracking-wider">
+                    SQUAD INVITATION DETECTED
+                  </span>
+                  <div className="text-sm font-mono font-black text-white">
+                    ROOM: <span className="text-emerald-400">{initialRoomCode}</span>
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => onJoinRoom(initialRoomCode, playerName.trim())}
+                className="w-full sm:w-auto px-5 py-2.5 bg-emerald-500 hover:bg-emerald-400 text-black font-mono font-black text-xs rounded-xl shadow-lg flex items-center justify-center gap-2 cursor-pointer uppercase transition-all"
+              >
+                <span>JOIN SQUAD NOW &rarr;</span>
+              </button>
             </div>
           )}
 

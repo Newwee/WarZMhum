@@ -36,11 +36,11 @@ function RemotePlayerMesh({ player }: { player: PlayerNetState }) {
       <Html position={[0, 2.35, 0]} center distanceFactor={16}>
         <div className="flex flex-col items-center pointer-events-none select-none">
           <div className="px-2.5 py-0.5 rounded bg-black/85 border border-emerald-500/60 text-[11px] font-mono font-black text-emerald-400 whitespace-nowrap shadow-lg">
-            {player.name}
+            {player.name} {player.health <= 0 ? '<KIA>' : ''}
           </div>
           <div className="w-16 h-1.5 bg-black/90 rounded-full mt-1 border border-zinc-700 overflow-hidden">
             <div
-              className="h-full bg-emerald-500 transition-all duration-200"
+              className={`h-full transition-all duration-200 ${player.health <= 0 ? 'bg-red-600' : 'bg-emerald-500'}`}
               style={{ width: `${Math.max(0, Math.min(100, player.health))}%` }}
             />
           </div>
@@ -52,6 +52,11 @@ function RemotePlayerMesh({ player }: { player: PlayerNetState }) {
         currentWeapon={(player.transform.currentWeapon as any) || 'RIFLE'}
         isShooting={player.transform.isShooting}
         isMoving={player.transform.isMoving}
+        isSprinting={player.transform.isSprinting}
+        isReloading={player.transform.isReloading}
+        isPunching={player.transform.isPunching}
+        isSlashing={player.transform.isSlashing}
+        isDead={player.health <= 0 || player.isDead}
       />
     </group>
   );

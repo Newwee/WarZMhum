@@ -17,6 +17,7 @@ export interface NetworkCallbacks {
   onKillFeed?: (item: KillFeedItem) => void;
   onLootDrop?: (crate: GroundLootCrate) => void;
   onLootTaken?: (data: { crateId: string; looterId: string }) => void;
+  onHostChange?: (isHost: boolean) => void;
 }
 
 export class RealtimeManager {
@@ -49,8 +50,8 @@ export class RealtimeManager {
         },
       });
 
-      // Listen for presence state (players in room)
-      this.channel.on('presence', { event: 'sync' }, () => {
+      // Presence Sync Handler
+      const syncPresences = () => {
         const state = this.channel?.presenceState() || {};
         const members: RoomMember[] = [];
         
@@ -69,8 +70,25 @@ export class RealtimeManager {
           }
         });
 
+        // Host Migration check (if host leaves or in public room with no designated host)
+        const hasHost = members.some((m) => m.role === 'HOST');
+        if (!hasHost && members.length > 0) {
+          members.sort((a, b) => new Date(a.joined_at).getTime() - new Date(b.joined_at).getTime());
+          if (members[0].profile_id === this.currentUserId) {
+            this.isHost = true;
+            members[0].role = 'HOST';
+            this.callbacks.onHostChange?.(true);
+          }
+        }
+
         this.callbacks.onMembersChange?.(members);
-      });
+      };
+
+      // Listen for presence state (players in room)
+      this.channel
+        .on('presence', { event: 'sync' }, syncPresences)
+        .on('presence', { event: 'join' }, syncPresences)
+        .on('presence', { event: 'leave' }, syncPresences);
 
       // Listen for broadcasts
       this.channel
@@ -120,15 +138,29 @@ export class RealtimeManager {
 
       // Subscribe and track presence
       await new Promise<void>((resolve) => {
+        const timer = setTimeout(() => {
+          console.warn('[RealtimeManager] Subscription timed out, proceeding anyway');
+          resolve();
+        }, 6000);
+
         this.channel?.subscribe(async (status) => {
           if (status === 'SUBSCRIBED') {
-            await this.channel?.track({
-              userId: this.currentUserId,
-              name: userDisplayName,
-              role: this.isHost ? 'HOST' : 'PLAYER',
-              is_ready: this.isHost ? true : false,
-              joined_at: new Date().toISOString(),
-            });
+            clearTimeout(timer);
+            try {
+              await this.channel?.track({
+                userId: this.currentUserId,
+                name: userDisplayName,
+                role: this.isHost ? 'HOST' : 'PLAYER',
+                is_ready: this.isHost ? true : false,
+                joined_at: new Date().toISOString(),
+              });
+              syncPresences();
+            } catch (err) {
+              console.error('[RealtimeManager] Track error:', err);
+            }
+            resolve();
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            clearTimeout(timer);
             resolve();
           }
         });

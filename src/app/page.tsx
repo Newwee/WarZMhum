@@ -61,22 +61,25 @@ export default function HomePage() {
     setLocalPlayerName(name);
     const code = 'WARZ-GLOBAL';
     setRoomCode(code);
-    setIsHost(true);
+    setIsHost(false); // Host election will decide who is host in WARZ-GLOBAL
 
     const initialMember: RoomMember = {
       id: localPlayerId,
       room_id: code,
       profile_id: localPlayerId,
-      role: 'HOST',
+      role: 'PLAYER',
       is_ready: true,
       display_name: name,
       joined_at: new Date().toISOString(),
     };
     setMembers([initialMember]);
 
-    const mgr = new RealtimeManager(code, localPlayerId, true, {
+    const mgr = new RealtimeManager(code, localPlayerId, false, {
       onMembersChange: (mList) => {
         if (mList.length > 0) setMembers(mList);
+      },
+      onHostChange: (newIsHost) => {
+        setIsHost(newIsHost);
       },
     });
 
@@ -106,6 +109,9 @@ export default function HomePage() {
     const mgr = new RealtimeManager(code, localPlayerId, true, {
       onMembersChange: (mList) => {
         if (mList.length > 0) setMembers(mList);
+      },
+      onHostChange: (newIsHost) => {
+        setIsHost(newIsHost);
       },
       onRoomStatusChange: (status) => {
         if (status === 'IN_PROGRESS') {
@@ -139,6 +145,9 @@ export default function HomePage() {
     const mgr = new RealtimeManager(code, localPlayerId, false, {
       onMembersChange: (mList) => {
         if (mList.length > 0) setMembers(mList);
+      },
+      onHostChange: (newIsHost) => {
+        setIsHost(newIsHost);
       },
       onRoomStatusChange: (status) => {
         if (status === 'IN_PROGRESS') {
@@ -183,6 +192,7 @@ export default function HomePage() {
           onJoinRoom={handleJoinRoom}
           inventory={inventory}
           onInventoryChange={handleInventoryChange}
+          initialRoomCode={roomCode}
         />
       )}
 
