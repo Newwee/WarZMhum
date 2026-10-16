@@ -104,6 +104,9 @@ export function FirstPersonPlayer({
   const velocity = useRef(new THREE.Vector3());
   const moveKeys = useRef({ forward: false, backward: false, left: false, right: false, sprint: false });
   const euler = useRef(new THREE.Euler(0, 0, 0, 'YXZ'));
+  const yaw = useRef(0);
+  const pitch = useRef(0);
+  const killedRemoteIds = useRef<Set<string>>(new Set());
   const isGrounded = useRef(true);
 
   // Recoil, camera kick, and fire loops
@@ -119,6 +122,20 @@ export function FirstPersonPlayer({
   const [punchSide, setPunchSide] = useState<'LEFT' | 'RIGHT'>('RIGHT');
   const [isSprintingState, setIsSprintingState] = useState(false);
   const deathSoundPlayed = useRef(false);
+  const prevHealthRef = useRef(health);
+
+  // Reset player transform & physics when respawning from death
+  useEffect(() => {
+    if (prevHealthRef.current <= 0 && health > 0) {
+      pos.current.set(0, 1.7, 5);
+      velocity.current.set(0, 0, 0);
+      euler.current.set(0, 0, 0, 'YXZ');
+      yaw.current = 0;
+      pitch.current = 0;
+      deathSoundPlayed.current = false;
+    }
+    prevHealthRef.current = health;
+  }, [health]);
 
   // Reload Logic for all gun types
   const handleReload = useCallback(() => {
@@ -213,7 +230,7 @@ export function FirstPersonPlayer({
 
       // 2. Check Remote Players
       for (const remotePlayer of Object.values(remotePlayersRef.current || {})) {
-        if (remotePlayer.id === playerId || remotePlayer.health <= 0) continue;
+        if (remotePlayer.id === playerId || remotePlayer.health <= 0 || remotePlayer.isDead || killedRemoteIds.current.has(remotePlayer.id)) continue;
         const [pX, pY, pZ] = remotePlayer.transform.position;
         const toPlayer = new THREE.Vector3(pX - rayOrigin.x, pY - rayOrigin.y, pZ - rayOrigin.z);
         const proj = toPlayer.dot(forwardDir);
@@ -301,7 +318,13 @@ export function FirstPersonPlayer({
 
         realtimeManager?.sendPlayerDamaged(hitRemotePlayerId, hitDamage, playerName, weaponName, isHeadshot);
 
-        if (hitRemotePlayerHp <= hitDamage) {
+        if (hitRemotePlayerHp <= hitDamage && !killedRemoteIds.current.has(hitRemotePlayerId)) {
+          killedRemoteIds.current.add(hitRemotePlayerId);
+          const rTarget = remotePlayersRef.current[hitRemotePlayerId];
+          if (rTarget) {
+            rTarget.health = 0;
+            rTarget.isDead = true;
+          }
           realtimeManager?.sendKillFeed({
             id: `kf_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
             killerName: playerName,
@@ -509,10 +532,22 @@ export function FirstPersonPlayer({
 
     const onMouseMove = (e: MouseEvent) => {
       if (document.pointerLockElement !== canvas) return;
-      const sens = isADS ? (currentWeapon === 'SNIPER' ? 0.0006 : 0.0012) : 0.0022;
-      euler.current.y -= (e.movementX || 0) * sens;
-      euler.current.x -= (e.movementY || 0) * sens;
-      euler.current.x = Math.max(-Math.PI / 2.1, Math.min(Math.PI / 2.1, euler.current.x));
+      if (health <= 0) return;
+
+      // Standard PC FPS Mouse Sensitivity (Smooth, predictable 1:1 raw mouse input)
+      const sens = isADS
+        ? (currentWeapon === 'SNIPER' ? 0.0009 : 0.0016)
+        : 0.0024;
+
+      yaw.current -= (e.movementX || 0) * sens;
+      pitch.current -= (e.movementY || 0) * sens;
+
+      // Strict vertical clamping [-89°, +89°] (1.52 rad) - prevents camera flipping or inversion
+      const maxPitch = 1.52;
+      pitch.current = Math.max(-maxPitch, Math.min(maxPitch, pitch.current));
+
+      euler.current.x = pitch.current;
+      euler.current.y = yaw.current;
     };
 
     const onKeyDown = (e: KeyboardEvent) => {
@@ -673,6 +708,15 @@ export function FirstPersonPlayer({
 
   // Main Game Loop per frame
   useFrame((_, delta) => {
+    // Clear killedRemoteIds for any remote player that respawned with health > 0
+    if (remotePlayersRef.current) {
+      for (const [rId, rPlayer] of Object.entries(remotePlayersRef.current)) {
+        if (rPlayer.health > 0 && killedRemoteIds.current.has(rId)) {
+          killedRemoteIds.current.delete(rId);
+        }
+      }
+    }
+
     // 1. FULL-AUTO CONTINUOUS FIRING
     if (isMouseDownRef.current && currentWeapon === 'RIFLE' && !isReloading && ammo > 0 && health > 0) {
       const now = Date.now();
@@ -687,12 +731,15 @@ export function FirstPersonPlayer({
       if (!deathSoundPlayed.current) {
         deathSoundPlayed.current = true;
         sounds.playDeathCollapse();
+        if (typeof document !== 'undefined' && document.pointerLockElement) {
+          document.exitPointerLock();
+        }
       }
       // Camera collapses down to ground and tilts sideways
-      pos.current.y = THREE.MathUtils.lerp(pos.current.y, 0.28, delta * 5);
-      euler.current.z = THREE.MathUtils.lerp(euler.current.z, 0.75, delta * 4);
+      pos.current.y = THREE.MathUtils.lerp(pos.current.y, 0.35, delta * 5);
+      euler.current.z = THREE.MathUtils.lerp(euler.current.z, 0.45, delta * 3);
       camera.position.copy(pos.current);
-      camera.rotation.set(euler.current.x, euler.current.y, euler.current.z);
+      camera.quaternion.setFromEuler(new THREE.Euler(0.15, yaw.current, euler.current.z, 'YXZ'));
       return;
     } else {
       deathSoundPlayed.current = false;
@@ -726,7 +773,7 @@ export function FirstPersonPlayer({
     moveVector.normalize();
 
     // Rotate movement by player yaw
-    moveVector.applyAxisAngle(new THREE.Vector3(0, 1, 0), euler.current.y);
+    moveVector.applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw.current);
     velocity.current.x = moveVector.x * speed;
     velocity.current.z = moveVector.z * speed;
 
@@ -757,15 +804,19 @@ export function FirstPersonPlayer({
     recoilVal.current = THREE.MathUtils.lerp(recoilVal.current, 0, delta * 15);
     cameraKick.current = THREE.MathUtils.lerp(cameraKick.current, 0, delta * 12);
 
-    // Apply Camera Transform
-    camera.rotation.set(euler.current.x + cameraKick.current, euler.current.y, euler.current.z);
+    // Apply Camera Transform using standard FPS Euler YXZ -> Quaternion
+    const effectivePitch = pitch.current + cameraKick.current;
+    const effectiveYaw = yaw.current;
+    const effectiveRoll = euler.current.z;
+
+    camera.quaternion.setFromEuler(new THREE.Euler(effectivePitch, effectiveYaw, effectiveRoll, 'YXZ'));
 
     if (perspective === 'FPS') {
       camera.position.copy(pos.current);
     } else {
       // TPS Camera (Third-Person behind shoulder)
       const tpsOffset = new THREE.Vector3(0.5, 0.4, 2.6);
-      tpsOffset.applyEuler(euler.current);
+      tpsOffset.applyEuler(new THREE.Euler(effectivePitch, effectiveYaw, 0, 'YXZ'));
       camera.position.copy(pos.current).add(tpsOffset);
     }
 
@@ -786,12 +837,11 @@ export function FirstPersonPlayer({
 
     // Update IceWall Hologram preview if held
     if (currentWeapon === 'ICEWALL') {
-      const yaw = euler.current.y;
       const spawnDist = 3.2;
-      const wallX = pos.current.x - Math.sin(yaw) * spawnDist;
-      const wallZ = pos.current.z - Math.cos(yaw) * spawnDist;
+      const wallX = pos.current.x - Math.sin(yaw.current) * spawnDist;
+      const wallZ = pos.current.z - Math.cos(yaw.current) * spawnDist;
       setPreviewPos([wallX, 1.3, wallZ]);
-      setPreviewYaw(yaw);
+      setPreviewYaw(yaw.current);
     }
 
     // Broadcast network transform to teammates
@@ -800,7 +850,7 @@ export function FirstPersonPlayer({
       name: playerName,
       transform: {
         position: [pos.current.x, pos.current.y, pos.current.z],
-        rotation: [euler.current.x, euler.current.y, euler.current.z],
+        rotation: [effectivePitch, effectiveYaw, effectiveRoll],
         isMoving,
         isShooting: isShootingRef.current,
         currentWeapon,
@@ -819,9 +869,9 @@ export function FirstPersonPlayer({
 
   return (
     <>
-      {/* FPS 3D Weapon Model */}
-      {perspective === 'FPS' && (
-        <group position={pos.current.toArray()} rotation={[euler.current.x, euler.current.y, euler.current.z]}>
+      {/* FPS 3D Weapon Model (Only visible while alive) */}
+      {health > 0 && perspective === 'FPS' && (
+        <group position={pos.current.toArray()} rotation={[pitch.current + cameraKick.current, yaw.current, 0, 'YXZ']}>
           <WeaponModel
             weaponType={currentWeapon}
             isADS={isADS}
@@ -836,17 +886,18 @@ export function FirstPersonPlayer({
         </group>
       )}
 
-      {/* TPS 3D Player Mesh */}
-      {perspective === 'TPS' && (
-        <group position={[pos.current.x, pos.current.y - 1.7, pos.current.z]} rotation={[0, euler.current.y, 0]}>
+      {/* TPS 3D Player Mesh or Dead Body Corpse on the ground */}
+      {(health <= 0 || perspective === 'TPS') && (
+        <group position={[pos.current.x, health <= 0 ? 0 : pos.current.y - 1.7, pos.current.z]} rotation={[0, yaw.current, 0]}>
           <SurvivorAvatar
             currentWeapon={currentWeapon}
             isShooting={isShootingRef.current}
             isMoving={
-              moveKeys.current.forward ||
-              moveKeys.current.backward ||
-              moveKeys.current.left ||
-              moveKeys.current.right
+              health > 0 &&
+              (moveKeys.current.forward ||
+                moveKeys.current.backward ||
+                moveKeys.current.left ||
+                moveKeys.current.right)
             }
             isSprinting={isSprintingState}
             isReloading={isReloading}

@@ -8,6 +8,7 @@ import { RemotePlayers } from './RemotePlayers';
 import { Zombies } from './Zombies';
 import { GameHUD } from './GameHUD';
 import { GameOverModal } from './GameOverModal';
+import { SurvivorDeathModal } from './SurvivorDeathModal';
 import { ImpactEffects, BloodPool, BulletTracer } from './ImpactEffects';
 import { IceWallManager } from './IceWall';
 import { WarZInventoryModal } from './WarZInventoryModal';
@@ -56,6 +57,7 @@ export function GameCanvas({
   const [stamina, setStamina] = useState(100);
   const [inventory, setInventory] = useState<PlayerInventory>(initialInventory);
   const [killFeed, setKillFeed] = useState<KillFeedItem[]>([]);
+  const [lastKiller, setLastKiller] = useState<{ killerName?: string; weaponName?: string } | null>(null);
 
   // Choose starting weapon based on purchased Lobby loadout
   const [currentWeapon, setCurrentWeapon] = useState<WeaponType>(() => {
@@ -172,29 +174,37 @@ export function GameCanvas({
   }, []);
 
   // Damage Player handler
-  const handleDamagePlayer = useCallback((damage: number) => {
-    setHealth((prev) => {
-      const nextHp = Math.max(0, prev - damage);
-      setDamageVignette(true);
-      setTimeout(() => setDamageVignette(false), 300);
+  const handleDamagePlayer = useCallback(
+    (damage: number, attackerName?: string, weaponName?: string) => {
+      setHealth((prev) => {
+        const nextHp = Math.max(0, prev - damage);
+        setDamageVignette(true);
+        setTimeout(() => setDamageVignette(false), 300);
 
-      if (nextHp <= 0 && prev > 0) {
-        sounds.playPlayerHurt();
-        const deathItem: KillFeedItem = {
-          id: `kf_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-          killerName: 'ZOMBIE',
-          victimName: localPlayerName,
-          weapon: 'CLAWS',
-          isHeadshot: false,
-          isPvP: false,
-          timestamp: Date.now(),
-        };
-        setKillFeed((feed) => [...feed.slice(-6), deathItem]);
-        realtimeManager?.sendKillFeed(deathItem);
-      }
-      return nextHp;
-    });
-  }, [localPlayerName, realtimeManager]);
+        if (nextHp <= 0 && prev > 0) {
+          sounds.playPlayerHurt();
+          if (attackerName) {
+            setLastKiller({ killerName: attackerName, weaponName: weaponName || 'FIREARM' });
+          } else {
+            setLastKiller({ killerName: 'INFECTED WALKER', weaponName: 'CLAWS' });
+            const deathItem: KillFeedItem = {
+              id: `kf_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              killerName: 'ZOMBIE',
+              victimName: localPlayerName,
+              weapon: 'CLAWS',
+              isHeadshot: false,
+              isPvP: false,
+              timestamp: Date.now(),
+            };
+            setKillFeed((feed) => [...feed.slice(-6), deathItem]);
+            realtimeManager?.sendKillFeed(deathItem);
+          }
+        }
+        return nextHp;
+      });
+    },
+    [localPlayerName, realtimeManager]
+  );
 
   // Hit Marker trigger
   const handleHitMarker = useCallback((isHeadshot: boolean) => {
@@ -496,9 +506,9 @@ export function GameCanvas({
       }
     };
 
-    (realtimeManager as any).callbacks.onPlayerDamaged = ({ playerId, damage }: any) => {
+    (realtimeManager as any).callbacks.onPlayerDamaged = ({ playerId, damage, attackerName, weapon }: any) => {
       if (playerId === localPlayerId) {
-        handleDamagePlayer(damage);
+        handleDamagePlayer(damage, attackerName, weapon);
       } else {
         setRemotePlayers((prev) => {
           const target = prev[playerId];
@@ -848,6 +858,44 @@ export function GameCanvas({
     realtimeManager?.sendStartGame();
   };
 
+  const handleRespawn = useCallback(() => {
+    setHealth(100);
+    setStamina(100);
+    setCurrentWeapon('UNARMED');
+    setAmmo(0);
+    setMaxAmmo(0);
+    setLastKiller(null);
+    hasDroppedLootRef.current = false;
+    localPlayerPosRef.current = [0, 1.7, 5];
+
+    // Broadcast alive state to peers
+    realtimeManager?.sendPosition({
+      id: localPlayerId,
+      name: localPlayerName,
+      transform: {
+        position: [0, 1.7, 5],
+        rotation: [0, 0, 0],
+        isMoving: false,
+        isShooting: false,
+        currentWeapon: 'UNARMED',
+        isSprinting: false,
+        isReloading: false,
+        isPunching: false,
+        isSlashing: false,
+      },
+      health: 100,
+      maxHealth: 100,
+      isDead: false,
+      score,
+      kills,
+    });
+
+    setTimeout(() => {
+      const canvas = document.querySelector('canvas');
+      canvas?.requestPointerLock();
+    }, 150);
+  }, [localPlayerId, localPlayerName, score, kills, realtimeManager]);
+
   return (
     <div className="relative w-full h-screen bg-black overflow-hidden select-none">
       {/* 3D WebGL Canvas */}
@@ -986,6 +1034,16 @@ export function GameCanvas({
         }}
         mode="IN_GAME"
       />
+
+      {/* Individual Survivor Death & Respawn Modal */}
+      {health <= 0 && !gameOver && (
+        <SurvivorDeathModal
+          killerName={lastKiller?.killerName}
+          weaponName={lastKiller?.weaponName}
+          onRespawn={handleRespawn}
+          onLeave={onExitGame}
+        />
+      )}
 
       {/* Game Over Modal */}
       {gameOver && matchSummary && (

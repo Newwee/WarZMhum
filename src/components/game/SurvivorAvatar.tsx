@@ -44,6 +44,21 @@ export function SurvivorAvatar({
         rootGroupRef.current.position.z = THREE.MathUtils.lerp(rootGroupRef.current.position.z, -0.6, delta * 8);
         rootGroupRef.current.rotation.x = THREE.MathUtils.lerp(rootGroupRef.current.rotation.x, -Math.PI / 2 + 0.08, delta * 8);
         rootGroupRef.current.rotation.z = THREE.MathUtils.lerp(rootGroupRef.current.rotation.z, 0.2, delta * 8);
+
+        // Relax limbs down flat along torso on the ground
+        if (rightArmRef.current) {
+          rightArmRef.current.rotation.x = THREE.MathUtils.lerp(rightArmRef.current.rotation.x, 0.1, delta * 8);
+          rightArmRef.current.rotation.y = 0;
+          rightArmRef.current.rotation.z = -0.25;
+        }
+        if (leftArmRef.current) {
+          leftArmRef.current.rotation.x = THREE.MathUtils.lerp(leftArmRef.current.rotation.x, 0.1, delta * 8);
+          leftArmRef.current.rotation.y = 0;
+          leftArmRef.current.rotation.z = 0.25;
+        }
+        if (leftLegRef.current) leftLegRef.current.rotation.set(0, 0, 0.05);
+        if (rightLegRef.current) rightLegRef.current.rotation.set(0, 0, -0.05);
+        if (torsoRef.current) torsoRef.current.rotation.set(0, 0, 0);
         return; // Halt limb walking cycles when dead
       } else {
         rootGroupRef.current.position.y = THREE.MathUtils.lerp(rootGroupRef.current.position.y, 0, delta * 12);
@@ -160,8 +175,8 @@ export function SurvivorAvatar({
             <meshStandardMaterial color="#474e49" roughness={0.8} />
           </mesh>
 
-          {/* Held Weapon Mesh */}
-          {currentWeapon !== 'UNARMED' && (
+          {/* Held Weapon Mesh (Only when alive - drops on death) */}
+          {!isDead && currentWeapon !== 'UNARMED' && (
             <group position={[0, -0.28, 0.25]}>
               {/* Pistol */}
               {currentWeapon === 'PISTOL' && (
