@@ -4,7 +4,7 @@ import React, { useRef, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
-import { ZombieNetState, ZombieType, PlayerNetState, WaveState } from '@/types/game';
+import { ZombieNetState, ZombieType, PlayerNetState, WaveState, IceWallObject } from '@/types/game';
 import { RealtimeManager } from '@/lib/network/realtime-manager';
 import { sounds } from '@/lib/audio/sound-effects';
 
@@ -23,6 +23,8 @@ interface ZombiesProps {
   currentWave: number;
   waveState: WaveState;
   setWaveState: React.Dispatch<React.SetStateAction<WaveState>>;
+  iceWallsRef?: React.MutableRefObject<IceWallObject[]>;
+  onDamageIceWall?: (id: string, damage: number) => void;
 }
 
 export function Zombies({
@@ -40,16 +42,14 @@ export function Zombies({
   currentWave,
   waveState,
   setWaveState,
+  iceWallsRef,
+  onDamageIceWall,
 }: ZombiesProps) {
   const lastSyncTime = useRef(0);
   const lastAttackTime = useRef<Record<string, number>>({});
   const lastMoanTime = useRef(0);
+  const lastStateSync = useRef(0);
   const wanderData = useRef<Record<string, { angle: number; timer: number; isMoving: boolean }>>({});
-
-  // Sync ref with state
-  useEffect(() => {
-    zombiesRef.current = zombies;
-  }, [zombies, zombiesRef]);
 
   // Detection range based on zombie type
   const getDetectionRange = (type: ZombieType): number => {
@@ -105,6 +105,7 @@ export function Zombies({
         });
       }
 
+      zombiesRef.current = newZombies;
       setZombies(newZombies);
       setWaveState((prev) => ({
         ...prev,
@@ -113,12 +114,13 @@ export function Zombies({
       }));
       sounds.playWaveAlarm();
     }
-  }, [isHost, currentWave, waveState.isWaveActive, zombies.length, setZombies, setWaveState]);
+  }, [isHost, currentWave, waveState.isWaveActive, zombiesRef, setZombies, setWaveState]);
 
   // Host Authoritative AI Update Loop
   useFrame((_, delta) => {
     if (!isHost) return;
-    if (zombies.length === 0) return;
+    const currentZombies = zombiesRef.current;
+    if (!currentZombies || currentZombies.length === 0) return;
 
     const allSurvivors: Array<{ id: string; pos: [number, number, number]; health: number }> = [];
     if (localPlayerHealth > 0) {
@@ -132,7 +134,6 @@ export function Zombies({
 
     if (allSurvivors.length === 0) return; // All survivors dead
 
-    let updated = false;
     const now = Date.now();
 
     // Random zombie atmospheric moan
@@ -141,8 +142,10 @@ export function Zombies({
       sounds.playZombieMoan();
     }
 
-    const nextZombies = zombies.map((zombie) => {
-      if (zombie.health <= 0) return zombie;
+    const nextZombies: ZombieNetState[] = [];
+
+    for (const zombie of currentZombies) {
+      if (zombie.health <= 0) continue; // Instantly discard dead zombies
 
       const detectionRange = getDetectionRange(zombie.type);
       const isDamaged = zombie.health < zombie.maxHealth;
@@ -177,14 +180,32 @@ export function Zombies({
         const dirZ = targetPos[2] - zombie.position[2];
         const angle = Math.atan2(dirX, dirZ);
 
-        // Attack if close enough (< 1.6 units)
-        if (closestDist < 1.6) {
+        // Check if blocked by an active IceWall
+        const iceWalls = iceWallsRef?.current || [];
+        let isBlockedByIceWall = false;
+        for (const wall of iceWalls) {
+          if (wall.health <= 0) continue;
+          const distToWall = Math.hypot(wall.position[0] - zombie.position[0], wall.position[2] - zombie.position[2]);
+          if (distToWall < 2.4) {
+            isBlockedByIceWall = true;
+            // Zombie attacks the IceWall to break through
+            const lastAtk = lastAttackTime.current[zombie.id] || 0;
+            if (now - lastAtk > 1300) {
+              lastAttackTime.current[zombie.id] = now;
+              const wallDmg = zombie.type === 'TANK' ? 45 : 20;
+              onDamageIceWall?.(wall.id, wallDmg);
+            }
+            break;
+          }
+        }
+
+        // Attack survivor if close enough (< 1.6 units) and not blocked by wall
+        if (closestDist < 1.6 && !isBlockedByIceWall) {
           const lastAtk = lastAttackTime.current[zombie.id] || 0;
           if (now - lastAtk > 1200) {
             lastAttackTime.current[zombie.id] = now;
             const damage = zombie.type === 'TANK' ? 30 : 15;
             if (targetId === localPlayerId) {
-              // Strict proximity check: Only damage if player is ACTUALLY right in front of zombie (< 1.8m)
               const curPos = localPlayerPosRef.current;
               const realDist = Math.hypot(curPos[0] - zombie.position[0], curPos[2] - zombie.position[2]);
               if (realDist <= 1.8) {
@@ -195,27 +216,37 @@ export function Zombies({
               realtimeManager?.sendPlayerDamaged(targetId, damage);
             }
           }
-          return {
+          nextZombies.push({
             ...zombie,
             rotation: angle,
             state: 'ATTACKING' as const,
             targetPlayerId: targetId,
-          };
+          });
+          continue;
+        }
+
+        // If blocked by IceWall, stop and attack wall
+        if (isBlockedByIceWall) {
+          nextZombies.push({
+            ...zombie,
+            rotation: angle,
+            state: 'ATTACKING' as const,
+          });
+          continue;
         }
 
         // Sprint towards survivor at full speed
         const step = zombie.speed * delta;
         const newX = zombie.position[0] + Math.sin(angle) * step;
         const newZ = zombie.position[2] + Math.cos(angle) * step;
-        updated = true;
 
-        return {
+        nextZombies.push({
           ...zombie,
           position: [newX, 0, newZ] as [number, number, number],
           rotation: angle,
           state: 'CHASING' as const,
           targetPlayerId: targetId,
-        };
+        });
       } else {
         // Player is OUTSIDE range: Idle standing or slow wandering
         if (!wanderData.current[zombie.id]) {
@@ -231,35 +262,38 @@ export function Zombies({
         if (wd.timer <= 0) {
           wd.angle += (Math.random() - 0.5) * 1.8;
           wd.timer = 3 + Math.random() * 5;
-          wd.isMoving = Math.random() > 0.4; // 60% chance moving slowly, 40% resting idle
+          wd.isMoving = Math.random() > 0.4;
         }
 
         if (wd.isMoving) {
-          const wanderSpeed = 0.65; // slow zombie stumble
+          const wanderSpeed = 0.65;
           const step = wanderSpeed * delta;
           const newX = Math.max(-50, Math.min(50, zombie.position[0] + Math.sin(wd.angle) * step));
           const newZ = Math.max(-50, Math.min(50, zombie.position[2] + Math.cos(wd.angle) * step));
-          updated = true;
 
-          return {
+          nextZombies.push({
             ...zombie,
             position: [newX, 0, newZ] as [number, number, number],
             rotation: wd.angle,
             state: 'WANDERING' as const,
             targetPlayerId: undefined,
-          };
+          });
         } else {
-          return {
+          nextZombies.push({
             ...zombie,
             state: 'IDLE' as const,
             targetPlayerId: undefined,
-          };
+          });
         }
       }
-    });
+    }
 
-    if (updated) {
-      setZombies(nextZombies);
+    zombiesRef.current = nextZombies;
+
+    // Synchronize to React state at ~25 FPS or on count changes
+    if (now - lastStateSync.current > 40 || nextZombies.length !== zombies.length) {
+      lastStateSync.current = now;
+      setZombies([...nextZombies]);
     }
 
     // Broadcast authoritative zombie sync at ~8 Hz (every 120ms)

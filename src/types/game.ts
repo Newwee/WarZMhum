@@ -92,3 +92,26 @@ export interface MatchSummary {
   completed: boolean;
   players: PlayerSummary[];
 }
+
+export type WeaponType = 'UNARMED' | 'RIFLE' | 'PISTOL' | 'ICEWALL' | 'MEDKIT';
+
+export interface PlayerInventory {
+  money: number;
+  hasRifle: boolean;
+  rifleAmmo: number;
+  hasPistol: boolean;
+  pistolAmmo: number;
+  iceWalls: number;
+  medkits: number;
+}
+
+export interface IceWallObject {
+  id: string;
+  ownerId: string;
+  position: [number, number, number];
+  rotation: number;
+  health: number;
+  maxHealth: number;
+  createdAt: number;
+  expiresAt: number;
+}

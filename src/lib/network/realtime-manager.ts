@@ -1,5 +1,5 @@
 import { getSupabase, isSupabaseConfigured } from '@/lib/supabase/client';
-import { Room, RoomMember, PlayerNetState, ZombieNetState, ShootEvent, WaveState, MatchSummary } from '@/types/game';
+import { Room, RoomMember, PlayerNetState, ZombieNetState, ShootEvent, WaveState, MatchSummary, IceWallObject } from '@/types/game';
 import { RealtimeChannel } from '@supabase/supabase-js';
 
 export interface NetworkCallbacks {
@@ -12,6 +12,8 @@ export interface NetworkCallbacks {
   onPlayerDamaged?: (data: { playerId: string; damage: number }) => void;
   onWaveChange?: (wave: WaveState) => void;
   onGameOver?: (summary: MatchSummary) => void;
+  onIceWallSpawn?: (wall: IceWallObject) => void;
+  onIceWallDamage?: (data: { id: string; damage: number }) => void;
 }
 
 export class RealtimeManager {
@@ -96,6 +98,12 @@ export class RealtimeManager {
         })
         .on('broadcast', { event: 'game_over' }, ({ payload }) => {
           this.callbacks.onGameOver?.(payload);
+        })
+        .on('broadcast', { event: 'icewall_spawn' }, ({ payload }) => {
+          this.callbacks.onIceWallSpawn?.(payload);
+        })
+        .on('broadcast', { event: 'icewall_damage' }, ({ payload }) => {
+          this.callbacks.onIceWallDamage?.(payload);
         });
 
       // Subscribe and track presence
@@ -129,6 +137,8 @@ export class RealtimeManager {
           if (type === 'player_damage') this.callbacks.onPlayerDamaged?.(payload);
           if (type === 'wave_state') this.callbacks.onWaveChange?.(payload);
           if (type === 'game_over') this.callbacks.onGameOver?.(payload);
+          if (type === 'icewall_spawn') this.callbacks.onIceWallSpawn?.(payload);
+          if (type === 'icewall_damage') this.callbacks.onIceWallDamage?.(payload);
         };
       }
       return true;
@@ -265,6 +275,37 @@ export class RealtimeManager {
       this.localBroadcast.postMessage({
         type: 'game_over',
         payload: summary,
+      });
+    }
+  }
+
+  public sendIceWallSpawn(wall: IceWallObject) {
+    if (this.channel) {
+      this.channel.send({
+        type: 'broadcast',
+        event: 'icewall_spawn',
+        payload: wall,
+      });
+    } else if (this.localBroadcast) {
+      this.localBroadcast.postMessage({
+        type: 'icewall_spawn',
+        payload: wall,
+      });
+    }
+  }
+
+  public sendIceWallDamage(wallId: string, damage: number) {
+    const payload = { id: wallId, damage };
+    if (this.channel) {
+      this.channel.send({
+        type: 'broadcast',
+        event: 'icewall_damage',
+        payload,
+      });
+    } else if (this.localBroadcast) {
+      this.localBroadcast.postMessage({
+        type: 'icewall_damage',
+        payload,
       });
     }
   }

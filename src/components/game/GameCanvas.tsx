@@ -9,8 +9,10 @@ import { Zombies } from './Zombies';
 import { GameHUD } from './GameHUD';
 import { GameOverModal } from './GameOverModal';
 import { ImpactEffects, BloodPool, BulletTracer } from './ImpactEffects';
+import { IceWallManager } from './IceWall';
+import { ShopModal } from './ShopModal';
 import { RealtimeManager } from '@/lib/network/realtime-manager';
-import { PlayerNetState, ZombieNetState, ShootEvent, WaveState, MatchSummary, ZombieType } from '@/types/game';
+import { PlayerNetState, ZombieNetState, ShootEvent, WaveState, MatchSummary, ZombieType, PlayerInventory, WeaponType, IceWallObject } from '@/types/game';
 import { sounds } from '@/lib/audio/sound-effects';
 
 interface GameCanvasProps {
@@ -30,26 +32,47 @@ export function GameCanvas({
   realtimeManager,
   onExitGame,
 }: GameCanvasProps) {
-  // Player vitals & weapon state
+  // Player vitals & inventory state (Starts with $10,000 and unarmed)
   const [health, setHealth] = useState(100);
   const [stamina, setStamina] = useState(100);
-  const [currentWeapon, setCurrentWeapon] = useState<'RIFLE' | 'PISTOL'>('RIFLE');
-  const [ammo, setAmmo] = useState(30);
-  const [maxAmmo, setMaxAmmo] = useState(30);
+  const [currentWeapon, setCurrentWeapon] = useState<WeaponType>('UNARMED');
+  const [ammo, setAmmo] = useState(0);
+  const [maxAmmo, setMaxAmmo] = useState(0);
   const [isReloading, setIsReloading] = useState(false);
   const [score, setScore] = useState(0);
   const [kills, setKills] = useState(0);
+
+  // Survivor Inventory: Everyone enters empty-handed with $10,000 starting cash
+  const [inventory, setInventory] = useState<PlayerInventory>({
+    money: 10000,
+    hasRifle: false,
+    rifleAmmo: 0,
+    hasPistol: false,
+    pistolAmmo: 0,
+    iceWalls: 0,
+    medkits: 0,
+  });
+
+  // Shop & Visual FX
+  const [isShopOpen, setIsShopOpen] = useState(false);
+  const [damageVignette, setDamageVignette] = useState(false);
+  const [healVignette, setHealVignette] = useState(false);
+  const [hitMarker, setHitMarker] = useState<'body' | 'head' | null>(null);
 
   // View & Control state
   const [perspective, setPerspective] = useState<'FPS' | 'TPS'>('FPS');
   const [isADS, setIsADS] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
-  const [damageVignette, setDamageVignette] = useState(false);
-  const [hitMarker, setHitMarker] = useState<'body' | 'head' | null>(null);
 
   // FX: Blood Pools & Bullet Tracers
   const [bloodPools, setBloodPools] = useState<BloodPool[]>([]);
   const [tracers, setTracers] = useState<BulletTracer[]>([]);
+
+  // IceWalls
+  const [iceWalls, setIceWalls] = useState<IceWallObject[]>([]);
+  const iceWallsRef = useRef<IceWallObject[]>([]);
+  const [previewPos, setPreviewPos] = useState<[number, number, number]>([0, 1.3, 0]);
+  const [previewYaw, setPreviewYaw] = useState<number>(0);
 
   // Multiplayer & Zombies
   const [remotePlayers, setRemotePlayers] = useState<Record<string, PlayerNetState>>({});
@@ -71,14 +94,17 @@ export function GameCanvas({
   const gameStartTime = useRef(Date.now());
 
   // Switch weapon logic
-  const handleWeaponChange = (newWeapon: 'RIFLE' | 'PISTOL') => {
+  const handleWeaponChange = (newWeapon: WeaponType) => {
     setCurrentWeapon(newWeapon);
     if (newWeapon === 'PISTOL') {
       setMaxAmmo(6);
       setAmmo(6);
-    } else {
+    } else if (newWeapon === 'RIFLE') {
       setMaxAmmo(30);
       setAmmo(30);
+    } else {
+      setMaxAmmo(0);
+      setAmmo(0);
     }
   };
 
@@ -115,31 +141,39 @@ export function GameCanvas({
     setTimeout(() => setHitMarker(null), 140);
   }, []);
 
-  // Kill zombie handler
+  // Kill zombie handler with Bounty Cash Rewards
   const handleKillZombie = useCallback(
     (zombieId: string, zombieType: ZombieType) => {
       const pts = zombieType === 'TANK' ? 350 : zombieType === 'RUNNER' ? 180 : 100;
+      const cashReward = zombieType === 'TANK' ? 600 : zombieType === 'RUNNER' ? 250 : 150;
       setScore((s) => s + pts);
       setKills((k) => k + 1);
 
-      setZombies((prev) => {
-        const filtered = prev.filter((z) => z.id !== zombieId);
-        setWaveState((w) => {
-          const remaining = filtered.length;
-          if (remaining === 0 && isHost) {
-            setTimeout(() => {
-              setCurrentWave((cw) => cw + 1);
-              setWaveState({
-                wave: currentWave + 1,
-                zombiesRemaining: 6 + (currentWave + 1) * 4,
-                totalZombiesInWave: 6 + (currentWave + 1) * 4,
-                isWaveActive: true,
-              });
-            }, 3500);
-          }
-          return { ...w, zombiesRemaining: remaining };
-        });
-        return filtered;
+      // Reward player with Bounty Cash
+      setInventory((prev) => ({
+        ...prev,
+        money: prev.money + cashReward,
+      }));
+
+      // 1. Permanently prune dead zombie from Authoritative Ref
+      zombiesRef.current = zombiesRef.current.filter((z) => z.id !== zombieId);
+      setZombies([...zombiesRef.current]);
+
+      // 2. Wave Progression Check
+      setWaveState((w) => {
+        const remaining = zombiesRef.current.length;
+        if (remaining === 0 && isHost) {
+          setTimeout(() => {
+            setCurrentWave((cw) => cw + 1);
+            setWaveState({
+              wave: currentWave + 1,
+              zombiesRemaining: 6 + (currentWave + 1) * 4,
+              totalZombiesInWave: 6 + (currentWave + 1) * 4,
+              isWaveActive: true,
+            });
+          }, 3500);
+        }
+        return { ...w, zombiesRemaining: remaining };
       });
     },
     [currentWave, isHost]
@@ -148,21 +182,161 @@ export function GameCanvas({
   // Apply zombie damage immediately on local client
   const handleDamageZombieLocally = useCallback(
     (zombieId: string, damage: number, isHeadshot: boolean) => {
-      setZombies((prev) =>
-        prev.map((z) => {
-          if (z.id === zombieId) {
-            const newHp = Math.max(0, z.health - damage);
-            if (newHp <= 0 && z.health > 0) {
-              handleKillZombie(z.id, z.type);
-            }
-            return { ...z, health: newHp, state: 'CHASING' as const };
-          }
-          return z;
-        })
-      );
+      const target = zombiesRef.current.find((z) => z.id === zombieId);
+      if (target) {
+        target.health = Math.max(0, target.health - damage);
+        target.state = 'CHASING';
+        if (target.health <= 0) {
+          handleKillZombie(target.id, target.type);
+          return;
+        }
+      }
+      setZombies([...zombiesRef.current]);
     },
     [handleKillZombie]
   );
+
+  // Buy Item from Shop
+  const handleBuyItem = useCallback(
+    (itemKey: 'RIFLE' | 'RIFLE_AMMO' | 'PISTOL' | 'PISTOL_AMMO' | 'ICEWALL' | 'MEDKIT', cost: number) => {
+      setInventory((prev) => {
+        if (prev.money < cost) return prev;
+        const next = { ...prev, money: prev.money - cost };
+
+        if (itemKey === 'RIFLE') {
+          next.hasRifle = true;
+          next.rifleAmmo = prev.rifleAmmo + 60;
+          setCurrentWeapon('RIFLE');
+          setMaxAmmo(30);
+          setAmmo(30);
+        } else if (itemKey === 'RIFLE_AMMO') {
+          next.rifleAmmo = prev.rifleAmmo + 30;
+        } else if (itemKey === 'PISTOL') {
+          next.hasPistol = true;
+          next.pistolAmmo = prev.pistolAmmo + 18;
+          setCurrentWeapon('PISTOL');
+          setMaxAmmo(6);
+          setAmmo(6);
+        } else if (itemKey === 'PISTOL_AMMO') {
+          next.pistolAmmo = prev.pistolAmmo + 12;
+        } else if (itemKey === 'ICEWALL') {
+          next.iceWalls = prev.iceWalls + 1;
+          if (currentWeapon === 'UNARMED') {
+            setCurrentWeapon('ICEWALL');
+          }
+        } else if (itemKey === 'MEDKIT') {
+          next.medkits = prev.medkits + 1;
+        }
+        return next;
+      });
+    },
+    [currentWeapon]
+  );
+
+  // Place IceWall into 3D world
+  const handlePlaceIceWall = useCallback(
+    (pos: [number, number, number], yaw: number) => {
+      if (inventory.iceWalls <= 0) return;
+
+      setInventory((prev) => {
+        const remaining = Math.max(0, prev.iceWalls - 1);
+        if (remaining <= 0) {
+          if (prev.hasRifle) setCurrentWeapon('RIFLE');
+          else if (prev.hasPistol) setCurrentWeapon('PISTOL');
+          else setCurrentWeapon('UNARMED');
+        }
+        return { ...prev, iceWalls: remaining };
+      });
+
+      const newWall: IceWallObject = {
+        id: `wall_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        ownerId: localPlayerId,
+        position: pos,
+        rotation: yaw,
+        health: 400,
+        maxHealth: 400,
+        createdAt: Date.now(),
+        expiresAt: Date.now() + 25000,
+      };
+
+      iceWallsRef.current = [...iceWallsRef.current, newWall];
+      setIceWalls([...iceWallsRef.current]);
+      realtimeManager?.sendIceWallSpawn(newWall);
+      sounds.playIceWallPlace();
+    },
+    [inventory.iceWalls, localPlayerId, realtimeManager]
+  );
+
+  // Damage or shatter IceWall
+  const handleDamageIceWall = useCallback(
+    (id: string, damage: number) => {
+      const wall = iceWallsRef.current.find((w) => w.id === id);
+      if (wall) {
+        wall.health = Math.max(0, wall.health - damage);
+        if (wall.health <= 0) {
+          iceWallsRef.current = iceWallsRef.current.filter((w) => w.id !== id);
+        }
+        setIceWalls([...iceWallsRef.current]);
+        realtimeManager?.sendIceWallDamage(id, damage);
+      }
+    },
+    [realtimeManager]
+  );
+
+  // Use Medkit to recover health
+  const handleUseMedkit = useCallback(() => {
+    if (inventory.medkits <= 0) return;
+    if (health >= 100) return;
+
+    setInventory((prev) => ({
+      ...prev,
+      medkits: Math.max(0, prev.medkits - 1),
+    }));
+
+    setHealth((prev) => Math.min(100, prev + 50));
+    setHealVignette(true);
+    setTimeout(() => setHealVignette(false), 450);
+    sounds.playMedkitHeal();
+
+    if (currentWeapon === 'MEDKIT' && inventory.medkits <= 1) {
+      if (inventory.hasRifle) setCurrentWeapon('RIFLE');
+      else if (inventory.hasPistol) setCurrentWeapon('PISTOL');
+      else setCurrentWeapon('UNARMED');
+    }
+  }, [inventory.medkits, inventory.hasRifle, inventory.hasPistol, health, currentWeapon]);
+
+  // Open / Close Shop
+  const handleToggleShop = useCallback(() => {
+    setIsShopOpen((prev) => {
+      const next = !prev;
+      if (next && document.exitPointerLock) {
+        document.exitPointerLock();
+      }
+      return next;
+    });
+  }, []);
+
+  // Quick Slot Select
+  const handleSelectSlot = useCallback(
+    (weapon: WeaponType) => {
+      handleWeaponChange(weapon);
+      sounds.playSwitchWeapon();
+    },
+    []
+  );
+
+  // IceWall Auto-Lifespan expiration cleanup
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const unexpired = iceWallsRef.current.filter((w) => w.expiresAt > now && w.health > 0);
+      if (unexpired.length !== iceWallsRef.current.length) {
+        iceWallsRef.current = unexpired;
+        setIceWalls([...unexpired]);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Incoming network sync
   useEffect(() => {
@@ -184,18 +358,32 @@ export function GameCanvas({
     };
 
     (realtimeManager as any).callbacks.onZombieDamaged = ({ zombieId, damage, attackerId }: any) => {
-      setZombies((prev) =>
-        prev.map((z) => {
-          if (z.id === zombieId) {
-            const newHp = Math.max(0, z.health - damage);
-            if (newHp <= 0 && z.health > 0 && attackerId === localPlayerId) {
-              handleKillZombie(z.id, z.type);
-            }
-            return { ...z, health: newHp };
-          }
-          return z;
-        })
-      );
+      const target = zombiesRef.current.find((z) => z.id === zombieId);
+      if (target) {
+        target.health = Math.max(0, target.health - damage);
+        target.state = 'CHASING';
+        if (target.health <= 0 && attackerId === localPlayerId) {
+          handleKillZombie(target.id, target.type);
+          return;
+        }
+      }
+      setZombies([...zombiesRef.current]);
+    };
+
+    (realtimeManager as any).callbacks.onIceWallSpawn = (wall: IceWallObject) => {
+      iceWallsRef.current = [...iceWallsRef.current, wall];
+      setIceWalls([...iceWallsRef.current]);
+    };
+
+    (realtimeManager as any).callbacks.onIceWallDamage = ({ id, damage }: any) => {
+      const wall = iceWallsRef.current.find((w) => w.id === id);
+      if (wall) {
+        wall.health = Math.max(0, wall.health - damage);
+        if (wall.health <= 0) {
+          iceWallsRef.current = iceWallsRef.current.filter((w) => w.id !== id);
+        }
+        setIceWalls([...iceWallsRef.current]);
+      }
     };
 
     (realtimeManager as any).callbacks.onPlayerDamaged = ({ playerId, damage }: any) => {
@@ -302,6 +490,7 @@ export function GameCanvas({
           isReloading={isReloading}
           currentWeapon={currentWeapon}
           perspective={perspective}
+          inventory={inventory}
           onHealthChange={setHealth}
           onStaminaChange={setStamina}
           onAmmoChange={setAmmo}
@@ -316,11 +505,18 @@ export function GameCanvas({
           onSpawnBloodPool={handleSpawnBloodPool}
           realtimeManager={realtimeManager}
           zombiesRef={zombiesRef}
+          iceWallsRef={iceWallsRef}
+          onPlaceIceWall={handlePlaceIceWall}
+          onDamageIceWall={handleDamageIceWall}
+          onUseMedkit={handleUseMedkit}
+          onToggleShop={handleToggleShop}
           isLocked={isLocked}
           setIsLocked={setIsLocked}
           isADS={isADS}
           setIsADS={setIsADS}
           playerPosRef={localPlayerPosRef}
+          setPreviewPos={setPreviewPos}
+          setPreviewYaw={setPreviewYaw}
         />
 
         {/* Remote Teammate Avatars */}
@@ -342,6 +538,16 @@ export function GameCanvas({
           currentWave={currentWave}
           waveState={waveState}
           setWaveState={setWaveState}
+          iceWallsRef={iceWallsRef}
+          onDamageIceWall={handleDamageIceWall}
+        />
+
+        {/* 3D Bulletproof IceWalls & Hologram Placement Preview */}
+        <IceWallManager
+          iceWalls={iceWalls}
+          previewActive={currentWeapon === 'ICEWALL'}
+          previewPos={previewPos}
+          previewYaw={previewYaw}
         />
 
         {/* Bullet Tracers and Blood Pools */}
@@ -368,11 +574,24 @@ export function GameCanvas({
             canvas?.requestPointerLock();
           }}
           damageVignette={damageVignette}
+          healVignette={healVignette}
           currentWeapon={currentWeapon}
+          inventory={inventory}
           isADS={isADS}
           perspective={perspective}
+          onSelectSlot={handleSelectSlot}
+          onOpenShop={handleToggleShop}
+          isShopOpen={isShopOpen}
         />
       )}
+
+      {/* Armory & Supply Depot Shop Modal */}
+      <ShopModal
+        isOpen={isShopOpen}
+        onClose={() => setIsShopOpen(false)}
+        inventory={inventory}
+        onBuyItem={handleBuyItem}
+      />
 
       {/* Game Over Modal */}
       {gameOver && matchSummary && (

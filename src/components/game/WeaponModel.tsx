@@ -4,8 +4,10 @@ import React, { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
+import { WeaponType } from '@/types/game';
+
 interface WeaponModelProps {
-  weaponType: 'RIFLE' | 'PISTOL';
+  weaponType: WeaponType;
   isADS: boolean;
   isShooting: boolean;
   recoil: number;
@@ -23,10 +25,17 @@ export function WeaponModel({ weaponType, isADS, isShooting, recoil, bobOffset }
       return isADS
         ? new THREE.Vector3(0, -0.135, -0.32)
         : new THREE.Vector3(0.22, -0.22, -0.42);
-    } else {
+    } else if (weaponType === 'RIFLE') {
       return isADS
         ? new THREE.Vector3(0, -0.145, -0.36)
         : new THREE.Vector3(0.25, -0.24, -0.48);
+    } else if (weaponType === 'ICEWALL') {
+      return new THREE.Vector3(0.18, -0.22, -0.38);
+    } else if (weaponType === 'MEDKIT') {
+      return new THREE.Vector3(0.16, -0.2, -0.36);
+    } else {
+      // UNARMED (Fists)
+      return new THREE.Vector3(0, -0.24, -0.35);
     }
   }, [isADS, weaponType]);
 
@@ -207,6 +216,95 @@ export function WeaponModel({ weaponType, isADS, isShooting, recoil, bobOffset }
               <pointLight ref={muzzleFlashRef} color="#ff9900" intensity={6} distance={8} />
             </group>
           )}
+        </group>
+      )}
+
+      {/* 3. ICEWALL DEPLOYER (Crystalline tactical beacon device) */}
+      {weaponType === 'ICEWALL' && (
+        <group scale={[1, 1, 1]} position={[0, 0, 0]}>
+          {/* Tactical Tablet / Controller Body */}
+          <mesh position={[0, -0.02, 0]} rotation={[0.4, 0, 0]}>
+            <boxGeometry args={[0.16, 0.1, 0.03]} />
+            <meshStandardMaterial color="#0f172a" roughness={0.3} metalness={0.8} />
+          </mesh>
+
+          {/* Glowing Ice Crystal Core */}
+          <mesh position={[0, 0.04, -0.02]}>
+            <octahedronGeometry args={[0.04, 0]} />
+            <meshStandardMaterial
+              color="#38bdf8"
+              emissive="#0284c7"
+              emissiveIntensity={0.8}
+              roughness={0.1}
+              transparent
+              opacity={0.9}
+            />
+          </mesh>
+          <pointLight position={[0, 0.04, -0.02]} color="#38bdf8" intensity={2} distance={3} />
+
+          {/* Survivor Hands holding deployer */}
+          <mesh position={[0.08, -0.06, 0.04]} rotation={[-0.3, 0.2, -0.2]}>
+            <sphereGeometry args={[0.045, 10, 10]} />
+            <meshStandardMaterial color="#c89678" roughness={0.6} />
+          </mesh>
+          <mesh position={[-0.08, -0.06, 0.04]} rotation={[-0.3, -0.2, 0.2]}>
+            <sphereGeometry args={[0.045, 10, 10]} />
+            <meshStandardMaterial color="#c89678" roughness={0.6} />
+          </mesh>
+        </group>
+      )}
+
+      {/* 4. MILITARY MEDKIT (Auto-injector / Trauma kit) */}
+      {weaponType === 'MEDKIT' && (
+        <group scale={[1, 1, 1]}>
+          {/* Medkit Case */}
+          <mesh position={[0, -0.03, 0]} rotation={[0.3, -0.2, 0]}>
+            <boxGeometry args={[0.14, 0.11, 0.06]} />
+            <meshStandardMaterial color="#14532d" roughness={0.5} />
+          </mesh>
+          {/* Red Cross Symbol */}
+          <mesh position={[0, -0.03, 0.032]} rotation={[0.3, -0.2, 0]}>
+            <boxGeometry args={[0.05, 0.015, 0.005]} />
+            <meshBasicMaterial color="#ef4444" />
+          </mesh>
+          <mesh position={[0, -0.03, 0.032]} rotation={[0.3, -0.2, 0]}>
+            <boxGeometry args={[0.015, 0.05, 0.005]} />
+            <meshBasicMaterial color="#ef4444" />
+          </mesh>
+          {/* Hands holding kit */}
+          <mesh position={[0.07, -0.07, 0.05]}>
+            <sphereGeometry args={[0.045, 10, 10]} />
+            <meshStandardMaterial color="#c89678" roughness={0.6} />
+          </mesh>
+        </group>
+      )}
+
+      {/* 5. UNARMED (Bare survivor fists held in guard stance) */}
+      {weaponType === 'UNARMED' && (
+        <group scale={[1, 1, 1]}>
+          {/* Left Fist */}
+          <group position={[-0.14, -0.08, 0.08]}>
+            <mesh position={[0, 0, 0]}>
+              <sphereGeometry args={[0.05, 12, 12]} />
+              <meshStandardMaterial color="#c89678" roughness={0.6} />
+            </mesh>
+            <mesh position={[-0.03, -0.12, 0.12]} rotation={[-0.4, -0.2, 0.2]}>
+              <cylinderGeometry args={[0.05, 0.06, 0.24, 10]} />
+              <meshStandardMaterial color="#2d3732" roughness={0.8} />
+            </mesh>
+          </group>
+
+          {/* Right Fist */}
+          <group position={[0.14, -0.08, 0.08]}>
+            <mesh position={[0, 0, 0]}>
+              <sphereGeometry args={[0.05, 12, 12]} />
+              <meshStandardMaterial color="#c89678" roughness={0.6} />
+            </mesh>
+            <mesh position={[0.03, -0.12, 0.12]} rotation={[-0.4, 0.2, -0.2]}>
+              <cylinderGeometry args={[0.05, 0.06, 0.24, 10]} />
+              <meshStandardMaterial color="#2d3732" roughness={0.8} />
+            </mesh>
+          </group>
         </group>
       )}
     </group>

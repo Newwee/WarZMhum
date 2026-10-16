@@ -5,7 +5,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { RealtimeManager } from '@/lib/network/realtime-manager';
 import { sounds } from '@/lib/audio/sound-effects';
-import { ShootEvent } from '@/types/game';
+import { ShootEvent, WeaponType, PlayerInventory, IceWallObject } from '@/types/game';
 import { WeaponModel } from './WeaponModel';
 import { SurvivorAvatar } from './SurvivorAvatar';
 import { BulletTracer, BloodPool } from './ImpactEffects';
@@ -18,8 +18,9 @@ interface FirstPersonPlayerProps {
   ammo: number;
   maxAmmo: number;
   isReloading: boolean;
-  currentWeapon: 'RIFLE' | 'PISTOL';
+  currentWeapon: WeaponType;
   perspective: 'FPS' | 'TPS';
+  inventory: PlayerInventory;
   onHealthChange: (hp: number) => void;
   onStaminaChange: (stamina: number) => void;
   onAmmoChange: (ammo: number) => void;
@@ -28,17 +29,24 @@ interface FirstPersonPlayerProps {
   onShoot: (event: ShootEvent) => void;
   onHitMarker: (isHeadshot: boolean) => void;
   onHitZombie: (zombieId: string, damage: number, isHeadshot: boolean) => void;
-  onWeaponChange: (weapon: 'RIFLE' | 'PISTOL') => void;
+  onWeaponChange: (weapon: WeaponType) => void;
   onPerspectiveChange: (p: 'FPS' | 'TPS') => void;
   onSpawnTracer: (tracer: BulletTracer) => void;
   onSpawnBloodPool: (pool: BloodPool) => void;
   realtimeManager: RealtimeManager | null;
   zombiesRef: React.MutableRefObject<any[]>;
+  iceWallsRef: React.MutableRefObject<IceWallObject[]>;
+  onPlaceIceWall: (pos: [number, number, number], yaw: number) => void;
+  onDamageIceWall: (id: string, damage: number) => void;
+  onUseMedkit: () => void;
+  onToggleShop: () => void;
   isLocked: boolean;
   setIsLocked: (locked: boolean) => void;
   isADS: boolean;
   setIsADS: (ads: boolean) => void;
   playerPosRef: React.MutableRefObject<[number, number, number]>;
+  setPreviewPos: (pos: [number, number, number]) => void;
+  setPreviewYaw: (yaw: number) => void;
 }
 
 export function FirstPersonPlayer({
@@ -51,6 +59,7 @@ export function FirstPersonPlayer({
   isReloading,
   currentWeapon,
   perspective,
+  inventory,
   onHealthChange,
   onStaminaChange,
   onAmmoChange,
@@ -65,11 +74,18 @@ export function FirstPersonPlayer({
   onSpawnBloodPool,
   realtimeManager,
   zombiesRef,
+  iceWallsRef,
+  onPlaceIceWall,
+  onDamageIceWall,
+  onUseMedkit,
+  onToggleShop,
   isLocked,
   setIsLocked,
   isADS,
   setIsADS,
   playerPosRef,
+  setPreviewPos,
+  setPreviewYaw,
 }: FirstPersonPlayerProps) {
   const { camera, gl } = useThree();
 
@@ -119,20 +135,50 @@ export function FirstPersonPlayer({
       }
 
       // [R] Reload
-      if (e.code === 'KeyR' && ammo < maxAmmo && !isReloading) {
+      if (e.code === 'KeyR' && (currentWeapon === 'RIFLE' || currentWeapon === 'PISTOL') && ammo < maxAmmo && !isReloading) {
         handleReload();
       }
 
-      // [1] Switch to M4A1 Rifle
-      if (e.code === 'Digit1' && currentWeapon !== 'RIFLE' && !isReloading) {
-        onWeaponChange('RIFLE');
+      // [1] Switch to M4A1 Rifle (if owned)
+      if (e.code === 'Digit1') {
+        if (inventory.hasRifle) {
+          onWeaponChange('RIFLE');
+          sounds.playSwitchWeapon();
+        }
+      }
+
+      // [2] Switch to .45 Thunder Pistol (if owned)
+      if (e.code === 'Digit2') {
+        if (inventory.hasPistol) {
+          onWeaponChange('PISTOL');
+          sounds.playSwitchWeapon();
+        }
+      }
+
+      // [3] Switch to IceWall Deployer (if in inventory)
+      if (e.code === 'Digit3') {
+        if (inventory.iceWalls > 0) {
+          onWeaponChange('ICEWALL');
+          sounds.playSwitchWeapon();
+        }
+      }
+
+      // [4] Use Military Medkit (if in inventory)
+      if (e.code === 'Digit4') {
+        if (inventory.medkits > 0) {
+          onUseMedkit();
+        }
+      }
+
+      // [5] Switch to Unarmed (Bare hands)
+      if (e.code === 'Digit5') {
+        onWeaponChange('UNARMED');
         sounds.playSwitchWeapon();
       }
 
-      // [2] Switch to .45 Thunder Pistol
-      if (e.code === 'Digit2' && currentWeapon !== 'PISTOL' && !isReloading) {
-        onWeaponChange('PISTOL');
-        sounds.playSwitchWeapon();
+      // [B] Open / Close Shop & Armory
+      if (e.code === 'KeyB') {
+        onToggleShop();
       }
 
       // [V] Switch Perspective (FPS / TPS)
@@ -155,11 +201,13 @@ export function FirstPersonPlayer({
         return;
       }
       if (e.button === 0) {
-        // Left Click: Shoot
+        // Left Click: Shoot / Place / Punch
         handleShoot();
       } else if (e.button === 2) {
         // Right Click: Aim Down Sights (ADS)
-        setIsADS(true);
+        if (currentWeapon === 'RIFLE' || currentWeapon === 'PISTOL') {
+          setIsADS(true);
+        }
       }
     };
 
@@ -188,7 +236,20 @@ export function FirstPersonPlayer({
       canvas.removeEventListener('mouseup', onMouseUp);
       canvas.removeEventListener('contextmenu', onContextMenu);
     };
-  }, [gl.domElement, ammo, maxAmmo, isReloading, currentWeapon, isADS, perspective]);
+  }, [
+    gl.domElement,
+    ammo,
+    maxAmmo,
+    isReloading,
+    currentWeapon,
+    isADS,
+    perspective,
+    inventory,
+    onUseMedkit,
+    onToggleShop,
+    onWeaponChange,
+    onPerspectiveChange,
+  ]);
 
   const handleReload = () => {
     onReloadStart();
@@ -201,6 +262,54 @@ export function FirstPersonPlayer({
 
   const handleShoot = () => {
     if (health <= 0 || isReloading) return;
+
+    // 1. ICEWALL: Deploy ice wall on left click
+    if (currentWeapon === 'ICEWALL') {
+      if (inventory.iceWalls <= 0) return;
+      const yaw = euler.current.y;
+      const spawnDist = 3.2;
+      const wallX = pos.current.x - Math.sin(yaw) * spawnDist;
+      const wallZ = pos.current.z - Math.cos(yaw) * spawnDist;
+      onPlaceIceWall([wallX, 1.3, wallZ], yaw);
+      return;
+    }
+
+    // 2. MEDKIT: Heal on left click
+    if (currentWeapon === 'MEDKIT') {
+      onUseMedkit();
+      return;
+    }
+
+    // 3. UNARMED: Melee punch swing
+    if (currentWeapon === 'UNARMED') {
+      recoilVal.current = 0.08;
+      cameraKick.current = 0.02;
+      isShootingRef.current = true;
+      setTimeout(() => {
+        isShootingRef.current = false;
+      }, 100);
+
+      const zombies = zombiesRef.current || [];
+      for (const zombie of zombies) {
+        if (zombie.health <= 0) continue;
+        const dist = Math.hypot(zombie.position[0] - pos.current.x, zombie.position[2] - pos.current.z);
+        if (dist <= 2.2) {
+          zombie.health = Math.max(0, zombie.health - 30);
+          zombie.state = 'CHASING';
+          if (zombie.health <= 0) {
+            zombiesRef.current = zombiesRef.current.filter((z) => z.id !== zombie.id);
+          }
+          onHitZombie(zombie.id, 30, false);
+          sounds.playZombieHit();
+          onHitMarker(false);
+          realtimeManager?.sendZombieDamaged(zombie.id, 30, playerId);
+          break;
+        }
+      }
+      return;
+    }
+
+    // 4. FIREARMS: RIFLE or PISTOL
     if (ammo <= 0) {
       sounds.playReload();
       handleReload();
@@ -237,33 +346,56 @@ export function FirstPersonPlayer({
     forwardDir.normalize();
 
     let hitZombieId: string | undefined;
+    let hitIceWallId: string | undefined;
     let hitDamage = currentWeapon === 'PISTOL' ? 50 : 35;
     let isHeadshot = false;
     let hitPos = rayOrigin.clone().add(forwardDir.clone().multiplyScalar(75));
-
-    // Collision check against zombies with cylinder capsule hitbox
-    const zombies = zombiesRef.current || [];
     let closestDist = 75;
 
+    // A. Check bullet intersection against IceWalls (IceWalls block bullets completely!)
+    const iceWalls = iceWallsRef?.current || [];
+    for (const wall of iceWalls) {
+      if (wall.health <= 0) continue;
+      const wX = wall.position[0];
+      const wY = wall.position[1];
+      const wZ = wall.position[2];
+
+      const toWall = new THREE.Vector3(wX - rayOrigin.x, wY - rayOrigin.y, wZ - rayOrigin.z);
+      const proj = toWall.dot(forwardDir);
+
+      if (proj > 0.4 && proj < closestDist) {
+        const rayPoint = rayOrigin.clone().add(forwardDir.clone().multiplyScalar(proj));
+        const localX = (rayPoint.x - wX) * Math.cos(-wall.rotation) - (rayPoint.z - wZ) * Math.sin(-wall.rotation);
+        const localZ = (rayPoint.x - wX) * Math.sin(-wall.rotation) + (rayPoint.z - wZ) * Math.cos(-wall.rotation);
+        const localY = rayPoint.y - wY;
+
+        if (Math.abs(localX) <= 2.2 && Math.abs(localY) <= 1.4 && Math.abs(localZ) <= 0.6) {
+          closestDist = proj;
+          hitIceWallId = wall.id;
+          hitPos = rayPoint;
+        }
+      }
+    }
+
+    // B. Check collision against zombies if not blocked by closer IceWall
+    const zombies = zombiesRef.current || [];
     for (const zombie of zombies) {
       if (zombie.health <= 0) continue;
       const zX = zombie.position[0];
       const zZ = zombie.position[2];
       const zRadius = zombie.type === 'TANK' ? 1.4 : 1.0;
 
-      // Vector from camera to zombie center
       const toZombie = new THREE.Vector3(zX - rayOrigin.x, 1.0 - rayOrigin.y, zZ - rayOrigin.z);
       const proj = toZombie.dot(forwardDir);
 
       if (proj > 0.5 && proj < closestDist) {
-        // Point along ray closest to zombie
         const rayPoint = rayOrigin.clone().add(forwardDir.clone().multiplyScalar(proj));
         const horizDist = Math.hypot(rayPoint.x - zX, rayPoint.z - zZ);
 
-        // Check vertical height and cylinder radius
         if (horizDist < zRadius && rayPoint.y >= -0.2 && rayPoint.y <= 2.3) {
           closestDist = proj;
           hitZombieId = zombie.id;
+          hitIceWallId = undefined; // Zombie is closer than wall
           hitPos = rayPoint;
 
           // Headshot if hit above shoulder line
@@ -290,8 +422,22 @@ export function FirstPersonPlayer({
       life: 1.0,
     });
 
-    if (hitZombieId) {
-      // 1. Apply damage locally IMMEDIATELY so HP bar drops and kills register
+    if (hitIceWallId) {
+      // IceWall absorbed the bullet!
+      onDamageIceWall(hitIceWallId, hitDamage);
+      sounds.playIceWallPlace();
+    } else if (hitZombieId) {
+      // 1. Immediately mutate zombiesRef so health is locked down directly
+      const targetZombie = zombies.find((z) => z.id === hitZombieId);
+      if (targetZombie) {
+        targetZombie.health = Math.max(0, targetZombie.health - hitDamage);
+        targetZombie.state = 'CHASING';
+        if (targetZombie.health <= 0) {
+          zombiesRef.current = zombiesRef.current.filter((z) => z.id !== hitZombieId);
+        }
+      }
+
+      // 2. Trigger React state & Kill handler
       onHitZombie(hitZombieId, hitDamage, isHeadshot);
 
       if (isHeadshot) {
@@ -310,7 +456,7 @@ export function FirstPersonPlayer({
         rotation: Math.random() * Math.PI * 2,
       });
 
-      // 2. Broadcast damage to other players
+      // 3. Broadcast damage to other players
       realtimeManager?.sendZombieDamaged(hitZombieId, hitDamage, playerId);
     }
 
@@ -406,6 +552,13 @@ export function FirstPersonPlayer({
 
     // Keep live player position ref updated for zombies so they never attack empty air
     playerPosRef.current = [pos.current.x, pos.current.y, pos.current.z];
+
+    // Update IceWall placement preview hologram
+    if (currentWeapon === 'ICEWALL') {
+      const yaw = euler.current.y;
+      setPreviewPos([pos.current.x - Math.sin(yaw) * 3.2, 1.3, pos.current.z - Math.cos(yaw) * 3.2]);
+      setPreviewYaw(yaw);
+    }
 
     // Lock gun directly to camera in first-person so it NEVER floats away in mid-air
     if (gunHolderRef.current) {

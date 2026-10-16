@@ -1,9 +1,8 @@
-'use client';
-
 import React from 'react';
+import { WeaponType } from '@/types/game';
 
 interface SurvivorAvatarProps {
-  currentWeapon: 'RIFLE' | 'PISTOL';
+  currentWeapon: WeaponType;
   isShooting: boolean;
   isMoving: boolean;
 }
@@ -66,23 +65,38 @@ export function SurvivorAvatar({ currentWeapon, isShooting, isMoving }: Survivor
         </mesh>
       </group>
 
-      {/* Gun in Hands */}
-      <group position={[0.18, 1.2, 0.45]}>
-        {currentWeapon === 'PISTOL' ? (
-          <mesh>
-            <boxGeometry args={[0.05, 0.09, 0.24]} />
-            <meshStandardMaterial color="#1f2327" metalness={0.9} />
-          </mesh>
-        ) : (
-          <mesh>
-            <boxGeometry args={[0.06, 0.1, 0.55]} />
-            <meshStandardMaterial color="#1f2327" metalness={0.9} />
-          </mesh>
-        )}
-        {isShooting && (
-          <pointLight position={[0, 0, 0.4]} color="#ff9900" intensity={4} distance={5} />
-        )}
-      </group>
+      {/* Item or Gun in Hands */}
+      {currentWeapon !== 'UNARMED' && (
+        <group position={[0.18, 1.2, 0.45]}>
+          {currentWeapon === 'PISTOL' && (
+            <mesh>
+              <boxGeometry args={[0.05, 0.09, 0.24]} />
+              <meshStandardMaterial color="#1f2327" metalness={0.9} />
+            </mesh>
+          )}
+          {currentWeapon === 'RIFLE' && (
+            <mesh>
+              <boxGeometry args={[0.06, 0.1, 0.55]} />
+              <meshStandardMaterial color="#1f2327" metalness={0.9} />
+            </mesh>
+          )}
+          {currentWeapon === 'ICEWALL' && (
+            <mesh>
+              <boxGeometry args={[0.15, 0.08, 0.02]} />
+              <meshStandardMaterial color="#38bdf8" emissive="#0284c7" emissiveIntensity={0.6} />
+            </mesh>
+          )}
+          {currentWeapon === 'MEDKIT' && (
+            <mesh>
+              <boxGeometry args={[0.12, 0.09, 0.06]} />
+              <meshStandardMaterial color="#14532d" />
+            </mesh>
+          )}
+          {isShooting && (currentWeapon === 'RIFLE' || currentWeapon === 'PISTOL') && (
+            <pointLight position={[0, 0, 0.4]} color="#ff9900" intensity={4} distance={5} />
+          )}
+        </group>
+      )}
 
       {/* Tactical Track Pants with Side Stripe (WarZ Image 2) */}
       <mesh position={[-0.15, 0.45, 0]} castShadow>

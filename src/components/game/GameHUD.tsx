@@ -1,8 +1,8 @@
 'use client';
 
 import React from 'react';
-import { PlayerNetState, WaveState } from '@/types/game';
-import { Crosshair, Users, Skull, Activity, AlertCircle, Compass, Radio } from 'lucide-react';
+import { PlayerNetState, WaveState, PlayerInventory, WeaponType } from '@/types/game';
+import { Crosshair, Users, Skull, Activity, AlertCircle, Compass, Radio, DollarSign, ShoppingBag, Shield, PlusCircle } from 'lucide-react';
 
 interface GameHUDProps {
   health: number;
@@ -19,9 +19,14 @@ interface GameHUDProps {
   isLocked: boolean;
   onRequestLock: () => void;
   damageVignette: boolean;
-  currentWeapon: 'RIFLE' | 'PISTOL';
+  healVignette: boolean;
+  currentWeapon: WeaponType;
+  inventory: PlayerInventory;
   isADS: boolean;
   perspective: 'FPS' | 'TPS';
+  onSelectSlot: (weapon: WeaponType) => void;
+  onOpenShop: () => void;
+  isShopOpen: boolean;
 }
 
 export function GameHUD({
@@ -39,9 +44,14 @@ export function GameHUD({
   isLocked,
   onRequestLock,
   damageVignette,
+  healVignette,
   currentWeapon,
+  inventory,
   isADS,
   perspective,
+  onSelectSlot,
+  onOpenShop,
+  isShopOpen,
 }: GameHUDProps) {
   const hpPercent = Math.max(0, Math.min(100, (health / maxHealth) * 100));
 
@@ -52,19 +62,42 @@ export function GameHUD({
         <div className="fixed inset-0 bg-red-600/35 border-[12px] border-red-600/80 animate-pulse pointer-events-none transition-opacity duration-300" />
       )}
 
-      {/* TOP BAR: Clock, Squad Roster, Wave Status & Compass */}
+      {/* Healing Stimulant Vignette */}
+      {healVignette && (
+        <div className="fixed inset-0 bg-emerald-500/25 border-[10px] border-emerald-500/60 animate-pulse pointer-events-none transition-opacity duration-300" />
+      )}
+
+      {/* TOP BAR: Clock, Squad Roster, Cash & Shop, Wave Status & Compass */}
       <div className="flex justify-between items-start">
-        {/* Top-Left: WarZ Clock & Squad Status (Image 1) */}
+        {/* Top-Left: WarZ Clock & Squad Status */}
         <div className="flex flex-col gap-2">
-          {/* Digital Clock & Zone Info */}
-          <div className="bg-black/75 backdrop-blur-sm border border-zinc-800/80 rounded-lg px-3 py-1.5 flex items-center gap-3">
-            <span className="text-sm font-mono font-black text-zinc-200">19:27</span>
-            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-red-950/80 text-red-400 border border-red-800/60 font-bold uppercase">
-              WAR ZONE
-            </span>
-            <span className="text-[10px] font-mono text-zinc-400">
-              [V] VIEW: <strong className="text-emerald-400">{perspective}</strong>
-            </span>
+          {/* Digital Clock, Zone Info & Shop Button */}
+          <div className="flex items-center gap-2">
+            <div className="bg-black/75 backdrop-blur-sm border border-zinc-800/80 rounded-lg px-3 py-1.5 flex items-center gap-3">
+              <span className="text-sm font-mono font-black text-zinc-200">19:27</span>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-red-950/80 text-red-400 border border-red-800/60 font-bold uppercase">
+                WAR ZONE
+              </span>
+              <span className="text-[10px] font-mono text-zinc-400">
+                [V] VIEW: <strong className="text-emerald-400">{perspective}</strong>
+              </span>
+            </div>
+
+            {/* Survivor Cash Balance & Shop Button */}
+            <div className="bg-emerald-950/85 backdrop-blur-sm border border-emerald-500/60 rounded-lg px-3 py-1.5 flex items-center gap-1.5 shadow-lg">
+              <DollarSign className="w-4 h-4 text-emerald-400" />
+              <span className="text-xs font-mono font-black text-emerald-400">
+                ${inventory.money.toLocaleString()}
+              </span>
+            </div>
+
+            <button
+              onClick={onOpenShop}
+              className="pointer-events-auto px-3 py-1.5 bg-red-600/90 hover:bg-red-500 text-white font-mono text-xs font-bold rounded-lg border border-red-500/50 shadow-lg flex items-center gap-1.5 transition-transform hover:scale-105 active:scale-95 cursor-pointer"
+            >
+              <ShoppingBag className="w-4 h-4" />
+              [B] SHOP
+            </button>
           </div>
 
           {/* Squad List */}
@@ -76,7 +109,7 @@ export function GameHUD({
             <div className="space-y-1.5">
               <div className="flex justify-between text-xs font-mono">
                 <span className="text-emerald-400 font-bold">YOU</span>
-                <span className="text-zinc-300">{health} HP</span>
+                <span className="text-zinc-300">{Math.round(health)} HP</span>
               </div>
               {Object.values(remotePlayers).map((p) => (
                 <div key={p.id} className="flex justify-between text-[11px] font-mono text-zinc-400">
@@ -103,7 +136,7 @@ export function GameHUD({
           </div>
         </div>
 
-        {/* Top-Right: WarZ Tactical Compass Dial (Image 1) */}
+        {/* Top-Right: WarZ Tactical Compass Dial */}
         <div className="flex items-center gap-3">
           <div className="bg-black/75 backdrop-blur-sm border border-zinc-800/80 rounded-lg p-2 text-right">
             <div className="text-[10px] font-mono text-zinc-500">SCORE: <strong className="text-emerald-400 text-xs">{score}</strong></div>
@@ -149,8 +182,8 @@ export function GameHUD({
         </div>
       </div>
 
-      {/* Pointer Lock Overlay */}
-      {!isLocked && (
+      {/* Pointer Lock Overlay (Only when not locked AND shop is closed) */}
+      {!isLocked && !isShopOpen && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-auto bg-black/50 backdrop-blur-xs">
           <button
             onClick={onRequestLock}
@@ -284,62 +317,149 @@ export function GameHUD({
           </div>
         </div>
 
-        {/* 2. BOTTOM-CENTER: WarZ Quick Hotbar (Image 2 & 3) */}
-        <div className="hidden sm:flex items-center gap-1.5 bg-black/85 backdrop-blur-md border border-zinc-800/80 px-3 py-2 rounded-xl">
-          <div
-            className={`px-3 py-1.5 rounded-lg font-mono text-xs font-bold border transition-all ${
+        {/* 2. BOTTOM-CENTER: WarZ Quick Hotbar */}
+        <div className="hidden sm:flex items-center gap-1.5 bg-black/85 backdrop-blur-md border border-zinc-800/80 px-3 py-2 rounded-xl pointer-events-auto">
+          {/* Slot 1: Primary Rifle */}
+          <button
+            onClick={() => inventory.hasRifle ? onSelectSlot('RIFLE') : onOpenShop()}
+            className={`px-3 py-1.5 rounded-lg font-mono text-xs font-bold border transition-all cursor-pointer ${
               currentWeapon === 'RIFLE'
-                ? 'bg-red-950/80 border-red-500 text-white shadow-md'
-                : 'bg-zinc-900/60 border-zinc-800 text-zinc-400'
+                ? 'bg-red-950/90 border-red-500 text-white shadow-md'
+                : inventory.hasRifle
+                ? 'bg-zinc-900/80 border-zinc-700 text-zinc-300 hover:text-white'
+                : 'bg-zinc-950/60 border-zinc-900 text-zinc-600'
             }`}
           >
-            [1] M4A1 RIFLE
-          </div>
+            [1] M4A1 {inventory.hasRifle ? '' : '🔒'}
+          </button>
 
-          <div
-            className={`px-3 py-1.5 rounded-lg font-mono text-xs font-bold border transition-all ${
+          {/* Slot 2: Secondary Pistol */}
+          <button
+            onClick={() => inventory.hasPistol ? onSelectSlot('PISTOL') : onOpenShop()}
+            className={`px-3 py-1.5 rounded-lg font-mono text-xs font-bold border transition-all cursor-pointer ${
               currentWeapon === 'PISTOL'
-                ? 'bg-red-950/80 border-red-500 text-white shadow-md'
-                : 'bg-zinc-900/60 border-zinc-800 text-zinc-400'
+                ? 'bg-amber-950/90 border-amber-500 text-white shadow-md'
+                : inventory.hasPistol
+                ? 'bg-zinc-900/80 border-zinc-700 text-zinc-300 hover:text-white'
+                : 'bg-zinc-950/60 border-zinc-900 text-zinc-600'
             }`}
           >
-            [2] .45 THUNDER
-          </div>
+            [2] .45 PISTOL {inventory.hasPistol ? '' : '🔒'}
+          </button>
 
-          <div className="px-3 py-1.5 rounded-lg font-mono text-xs bg-zinc-900/40 border border-zinc-800/50 text-zinc-600">
-            [3] SPIKED BAT
-          </div>
-          <div className="px-3 py-1.5 rounded-lg font-mono text-xs bg-zinc-900/40 border border-zinc-800/50 text-zinc-600">
-            [4] MEDKIT
-          </div>
+          {/* Slot 3: IceWall */}
+          <button
+            onClick={() => inventory.iceWalls > 0 ? onSelectSlot('ICEWALL') : onOpenShop()}
+            className={`px-3 py-1.5 rounded-lg font-mono text-xs font-bold border transition-all cursor-pointer ${
+              currentWeapon === 'ICEWALL'
+                ? 'bg-cyan-950/90 border-cyan-400 text-cyan-200 shadow-md shadow-cyan-950'
+                : inventory.iceWalls > 0
+                ? 'bg-zinc-900/80 border-cyan-800/50 text-cyan-300 hover:text-white'
+                : 'bg-zinc-950/60 border-zinc-900 text-zinc-600'
+            }`}
+          >
+            [3] ICE WALL ({inventory.iceWalls})
+          </button>
+
+          {/* Slot 4: Medkit */}
+          <button
+            onClick={() => inventory.medkits > 0 ? onSelectSlot('MEDKIT') : onOpenShop()}
+            className={`px-3 py-1.5 rounded-lg font-mono text-xs font-bold border transition-all cursor-pointer ${
+              currentWeapon === 'MEDKIT'
+                ? 'bg-emerald-950/90 border-emerald-400 text-emerald-200 shadow-md shadow-emerald-950'
+                : inventory.medkits > 0
+                ? 'bg-zinc-900/80 border-emerald-800/50 text-emerald-300 hover:text-white'
+                : 'bg-zinc-950/60 border-zinc-900 text-zinc-600'
+            }`}
+          >
+            [4] MEDKIT ({inventory.medkits})
+          </button>
+
+          {/* Slot 5: Unarmed */}
+          <button
+            onClick={() => onSelectSlot('UNARMED')}
+            className={`px-3 py-1.5 rounded-lg font-mono text-xs font-bold border transition-all cursor-pointer ${
+              currentWeapon === 'UNARMED'
+                ? 'bg-zinc-800 border-zinc-400 text-white'
+                : 'bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:text-white'
+            }`}
+          >
+            [5] UNARMED
+          </button>
         </div>
 
-        {/* 3. BOTTOM-RIGHT: WarZ Weapon & Ammo Counter (Image 1) */}
+        {/* 3. BOTTOM-RIGHT: WarZ Weapon & Ammo Counter */}
         <div className="bg-black/85 backdrop-blur-md border border-zinc-800/80 p-3.5 rounded-xl min-w-[200px] text-right">
-          <div className="text-[10px] font-mono text-zinc-400 font-bold uppercase tracking-wider mb-0.5">
-            {currentWeapon === 'PISTOL' ? '.45 Thunder Revolver' : 'M4A1 Assault Rifle'}
-          </div>
+          {currentWeapon === 'UNARMED' && (
+            <>
+              <div className="text-[10px] font-mono text-zinc-400 font-bold uppercase tracking-wider mb-0.5">
+                BARE HANDS // UNARMED
+              </div>
+              <div className="text-3xl font-black font-mono text-zinc-300">
+                FISTS
+              </div>
+              <div className="text-[10px] font-mono text-amber-400 mt-1">
+                [L-CLICK] PUNCH &bull; PRESS [B] TO BUY WEAPONS
+              </div>
+            </>
+          )}
 
-          <div className="flex items-baseline justify-end gap-1.5 font-mono">
-            <span
-              className={`text-4xl font-black tracking-tight ${
-                ammo < 5 ? 'text-red-500 animate-pulse' : 'text-zinc-100'
-              }`}
-            >
-              {isReloading ? '--' : ammo}
-            </span>
-            <span className="text-zinc-500 font-bold text-sm">/ {maxAmmo}</span>
-          </div>
+          {currentWeapon === 'ICEWALL' && (
+            <>
+              <div className="text-[10px] font-mono text-cyan-400 font-bold uppercase tracking-wider mb-0.5">
+                ICE WALL DEPLOYER
+              </div>
+              <div className="text-3xl font-black font-mono text-cyan-300">
+                x{inventory.iceWalls}
+              </div>
+              <div className="text-[10px] font-mono text-cyan-400/80 mt-1">
+                [L-CLICK] DEPLOY 400HP BULLETPROOF WALL
+              </div>
+            </>
+          )}
 
-          {isReloading ? (
-            <div className="text-xs font-mono text-amber-400 font-bold flex items-center justify-end gap-1 mt-1">
-              <AlertCircle className="w-3.5 h-3.5 animate-spin" />
-              RELOADING...
-            </div>
-          ) : (
-            <div className="text-[10px] font-mono text-zinc-500 mt-1">
-              [L-CLICK] FIRE &bull; [R-CLICK] ADS &bull; [R] RELOAD
-            </div>
+          {currentWeapon === 'MEDKIT' && (
+            <>
+              <div className="text-[10px] font-mono text-emerald-400 font-bold uppercase tracking-wider mb-0.5">
+                MILITARY SURGICAL MEDKIT
+              </div>
+              <div className="text-3xl font-black font-mono text-emerald-300">
+                x{inventory.medkits}
+              </div>
+              <div className="text-[10px] font-mono text-emerald-400/80 mt-1">
+                [L-CLICK] OR [4] INJECT (+50 HP)
+              </div>
+            </>
+          )}
+
+          {(currentWeapon === 'RIFLE' || currentWeapon === 'PISTOL') && (
+            <>
+              <div className="text-[10px] font-mono text-zinc-400 font-bold uppercase tracking-wider mb-0.5">
+                {currentWeapon === 'PISTOL' ? '.45 Thunder Revolver' : 'M4A1 Assault Rifle'}
+              </div>
+
+              <div className="flex items-baseline justify-end gap-1.5 font-mono">
+                <span
+                  className={`text-4xl font-black tracking-tight ${
+                    ammo < 5 ? 'text-red-500 animate-pulse' : 'text-zinc-100'
+                  }`}
+                >
+                  {isReloading ? '--' : ammo}
+                </span>
+                <span className="text-zinc-500 font-bold text-sm">/ {maxAmmo}</span>
+              </div>
+
+              {isReloading ? (
+                <div className="text-xs font-mono text-amber-400 font-bold flex items-center justify-end gap-1 mt-1">
+                  <AlertCircle className="w-3.5 h-3.5 animate-spin" />
+                  RELOADING...
+                </div>
+              ) : (
+                <div className="text-[10px] font-mono text-zinc-500 mt-1">
+                  [L-CLICK] FIRE &bull; [R-CLICK] ADS &bull; [R] RELOAD
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
